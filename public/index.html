@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NET GAME PACK — みんなで遊べるオンラインミニゲーム集</title>
+  <meta name="description" content="友だちとブラウザだけで遊べるオンラインマルチプレイヤーゲーム集。ブロック崩し・PONGなど。" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕹️</text></svg>" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="site-header">
+      <div class="logo">NET GAME PACK</div>
+      <p class="tagline">ブラウザだけで、みんなで遊べるオンラインミニゲーム集</p>
+    </header>
+
+    <main class="game-grid" id="game-grid">
+      <!-- /api/games から動的に生成 -->
+    </main>
+
+    <p class="footer-note" id="stats-note"></p>
+    <p class="footer-note">
+      遊び方:ゲームを選んでルームを作成し、4文字のルームコード(または招待リンク)を友だちに共有してください。
+    </p>
+  </div>
+
+  <script>
+    (async function () {
+      'use strict';
+      const grid = document.getElementById('game-grid');
+
+      function card({ name, description, badge, path, comingSoon }) {
+        const el = document.createElement('article');
+        el.className = 'game-card' + (comingSoon ? ' coming-soon' : '');
+
+        const badgeEl = document.createElement('span');
+        badgeEl.className = 'badge';
+        badgeEl.textContent = badge;
+        el.appendChild(badgeEl);
+
+        const h2 = document.createElement('h2');
+        h2.textContent = name;
+        el.appendChild(h2);
+
+        const p = document.createElement('p');
+        p.textContent = description;
+        el.appendChild(p);
+
+        if (comingSoon) {
+          const span = document.createElement('span');
+          span.className = 'btn secondary';
+          span.style.pointerEvents = 'none';
+          span.textContent = '準備中';
+          el.appendChild(span);
+        } else {
+          const a = document.createElement('a');
+          a.className = 'btn';
+          a.href = path;
+          a.textContent = 'プレイする';
+          el.appendChild(a);
+        }
+        return el;
+      }
+
+      try {
+        const res = await fetch('/api/games');
+        const games = await res.json();
+        for (const g of games) {
+          grid.appendChild(
+            card({
+              name: g.name,
+              description: g.description,
+              badge:
+                g.minPlayers === g.maxPlayers
+                  ? `${g.maxPlayers}人対戦`
+                  : `1〜${g.maxPlayers}人プレイ`,
+              path: g.path,
+            })
+          );
+        }
+      } catch (err) {
+        const p = document.createElement('p');
+        p.className = 'footer-note';
+        p.textContent = 'ゲーム一覧を読み込めませんでした。再読み込みしてください。';
+        grid.appendChild(p);
+      }
+
+      grid.appendChild(
+        card({
+          name: '???',
+          description: '新しいゲームを準備中です。お楽しみに!',
+          badge: 'COMING SOON',
+          comingSoon: true,
+        })
+      );
+
+      try {
+        const res = await fetch('/api/stats');
+        const stats = await res.json();
+        if (stats.players > 0) {
+          document.getElementById('stats-note').textContent =
+            `現在 ${stats.rooms} ルーム / ${stats.players} 人がオンライン`;
+        }
+      } catch (err) {
+        /* 統計は任意情報なので無視 */
+      }
+    })();
+  </script>
+</body>
+</html>
