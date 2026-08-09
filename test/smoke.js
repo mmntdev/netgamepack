@@ -87,8 +87,8 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    games.body.some((g) => g.id === 'breakout') && games.body.some((g) => g.id === 'pong'),
-    'breakout と pong が登録されている'
+    ['breakout', 'polygon', 'pong'].every((id) => games.body.some((g) => g.id === id)),
+    'breakout / polygon / pong が登録されている'
   );
 }
 
@@ -164,6 +164,60 @@ async function testBreakout() {
   await sleep(300);
   const stats = await fetchJson(`${BASE}/api/stats`);
   check(stats.body.rooms === 0, '全員退室でルームが破棄される');
+}
+
+async function testPolygon() {
+  console.log('ポリゴン・ブロック崩し:');
+  const host = await connect();
+  const guest = await connect();
+
+  const created = await emitAck(host, 'room:create', { gameId: 'polygon', name: 'ホスト' });
+  check(created.ok === true, 'ルームを作成できる');
+  const joined = await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'ゲスト' });
+  check(joined.ok === true, '2人目が参加できる');
+
+  const started = await emitAck(host, 'room:start', {});
+  check(started.ok === true, 'ホストが開始できる');
+
+  const snap0 = await waitFor(guest, 'game:state');
+  check(snap0.n >= 3, `アリーナが${snap0.n}角形`);
+  check(snap0.bricks.length > 0, '中央にブロックが配置されている');
+  check(snap0.players.length === 2, 'パドルが2つある');
+
+  // ボールの方向へパドルを回すAI
+  const cx = snap0.w / 2;
+  const cy = snap0.h / 2;
+  const chase = (socket) => {
+    const handler = (snap) => {
+      if (snap.balls && snap.balls.length > 0) {
+        const b = snap.balls[0];
+        socket.emit('game:input', { a: Math.atan2(b.y - cy, b.x - cx) });
+      }
+    };
+    socket.on('game:state', handler);
+    return () => socket.off('game:state', handler);
+  };
+  const stops = [chase(host), chase(guest)];
+
+  const initialBricks = snap0.bricks.length;
+  let lastSnap = snap0;
+  const collector = (snap) => (lastSnap = snap);
+  guest.on('game:state', collector);
+
+  await sleep(12000);
+  stops.forEach((f) => f());
+  guest.off('game:state', collector);
+
+  check(
+    lastSnap.bricks.length < initialBricks || lastSnap.level > 1,
+    `ブロックが減っている(${initialBricks} → ${lastSnap.bricks.length}, level=${lastSnap.level})`
+  );
+  const totalScore = lastSnap.players.reduce((s, p) => s + p.score, 0);
+  check(totalScore > 0, `スコアが加算されている(合計 ${totalScore})`);
+
+  host.disconnect();
+  guest.disconnect();
+  await sleep(300);
 }
 
 async function testPong() {
@@ -300,6 +354,7 @@ async function main() {
 
     await testHttp();
     await testBreakout();
+    await testPolygon();
     await testPong();
     await testSpectatorRescue();
     await testValidation();
