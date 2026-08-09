@@ -299,6 +299,22 @@ async function testEdges() {
 
   host.disconnect();
   await sleep(300);
+
+  // 6人 → 六角形アリーナ
+  const six = [];
+  for (let i = 0; i < 6; i++) six.push(await connect());
+  const hexRoom = await emitAck(six[0], 'room:create', { gameId: 'edges', name: 'P1' });
+  for (let i = 1; i < 6; i++) {
+    const res = await emitAck(six[i], 'room:join', { roomId: hexRoom.roomId, name: `P${i + 1}` });
+    if (i === 5) check(res.role === 'player', '6人目もプレイヤーとして参加できる');
+  }
+  await emitAck(six[0], 'room:start', {});
+  const hexSnap = await waitFor(six[5], 'game:state');
+  check(hexSnap.n === 6, '6人プレイは六角形アリーナ');
+  check(hexSnap.walls.length === 0, '6人で全辺に担当がつく');
+  check(hexSnap.players.length === 6, 'パドルが6つある');
+  for (const s of six) s.disconnect();
+  await sleep(300);
 }
 
 async function testPong() {

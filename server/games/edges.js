@@ -53,7 +53,7 @@ function round1(v) {
 function sidesForPlayers(count) {
   if (count <= 1) return 3;
   if (count === 2) return 4;
-  return count; // 3人=三角形, 4人=正方形
+  return count; // 3人=三角形, 4人=正方形, 5人=五角形, 6人=六角形
 }
 
 /** 人数 → 担当する辺のインデックス(辺0が画面下の水平辺) */
@@ -569,9 +569,9 @@ module.exports = {
     id: 'edges',
     name: 'エッジ・ディフェンス',
     description:
-      '各プレイヤーがn角形の1辺を受け持つ協力ブロック崩し。自分の辺を抜かれるとみんなのライフが減る!誰もいない辺は壁が守る。人数でアリーナの形が変わる(1人=三角形 / 2人=正方形の上下 / 3人=三角形 / 4人=正方形)',
+      '各プレイヤーがn角形の1辺を受け持つ協力ブロック崩し。自分の辺を抜かれるとみんなのライフが減る!誰もいない辺は壁が守る。人数でアリーナの形が変わる(1人=三角形 / 2人=正方形の上下 / 3人以上=人数と同じ角数、最大6人=六角形)',
     minPlayers: 1,
-    maxPlayers: 4,
+    maxPlayers: 6,
     allowJoinInProgress: false,
     path: '/edges/',
   },
