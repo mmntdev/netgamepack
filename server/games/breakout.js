@@ -325,7 +325,11 @@ class BreakoutGame {
         for (const p of this.players.values()) {
           const w = this.paddleWidth(p);
           if (ball.x < p.x - BALL_R || ball.x > p.x + w + BALL_R) continue;
-          const rel = clamp((ball.x - (p.x + w / 2)) / (w / 2), -1, 1);
+          let rel = clamp((ball.x - (p.x + w / 2)) / (w / 2), -1, 1);
+          // ど真ん中ヒットの垂直反射は永久ループになり得るため、わずかに乱す
+          if (Math.abs(rel) < 0.05) {
+            rel += (this.rng() < 0.5 ? -1 : 1) * (0.05 + this.rng() * 0.05);
+          }
           const angle = rel * ((65 * Math.PI) / 180);
           const speed = Math.hypot(ball.vx, ball.vy);
           ball.vx = Math.sin(angle) * speed;

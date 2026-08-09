@@ -1,30 +1,30 @@
 'use strict';
 
-// ポリゴン・ブロック崩し(サーバー権威)
-// 中央にブロック群、正n角形の外周に沿ってパドルが周回する全方位型の協力ブロック崩し。
-// 外周のどこからでもボールが抜けるとライフを失う。レベルごとに角数 n が変わる。
+// エッジ・ディフェンス(サーバー権威)
+// 各プレイヤーが正n角形の1辺を受け持つ協力ブロック崩し。中央のブロックを崩しつつ、
+// 自分の辺からボールを抜かれると共有ライフが減る。担当者のいない辺は壁として反射する。
+// アリーナは人数で決まる: 1人=三角形(底辺担当) / 2人=正方形(上下担当) / 3人=三角形 / 4人=正方形
 
 const W = 700;
 const H = 700;
 const CX = W / 2;
 const CY = H / 2;
-const R = 310; // アリーナ(正n角形)の外接円半径
-const LEVEL_SIDES = [6, 5, 4, 8, 3];
+const R = 310;
 
-const PADDLE_HALF = 80; // 周長方向の半幅(px)
+const PADDLE_HALF = 70; // 辺方向の半幅(px)
 const PADDLE_THICK = 16;
-const PADDLE_SPEED = 820; // 周長方向 px/s
+const PADDLE_SPEED = 820; // 辺方向 px/s
 const BALL_R = 8;
 const BALL_BASE_SPEED = 300;
 const BALL_MAX_SPEED = 620;
 const MAX_BALLS = 6;
-const MAX_ANGLE = (55 * Math.PI) / 180; // パドル端で反射が傾く最大角
-const LOST_MARGIN = 28; // 辺の外側にこれだけ出たらボール喪失
+const MAX_ANGLE = (55 * Math.PI) / 180;
+const LOST_MARGIN = 28;
 
 const BRICK_W = 46;
 const BRICK_H = 20;
 const BRICK_GAP = 6;
-const RING_BASE_RADIUS = 92; // 最内リングの頂点半径
+const RING_BASE_RADIUS = 92;
 const RING_STEP = BRICK_H + 8;
 const RINGS = 3;
 
@@ -41,8 +41,6 @@ const POWERUP_TYPES = [
 const START_LIVES = 3;
 const MAX_LIVES = 9;
 
-const KANJI_NUM = { 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八' };
-
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -51,92 +49,44 @@ function round1(v) {
   return Math.round(v * 10) / 10;
 }
 
-/** 正n角形の外周ジオメトリ。外周は周長パラメータ s(0..P)で表す */
-class PolyGeom {
-  constructor(n) {
-    this.n = n;
-    this.verts = [];
-    const phi0 = -Math.PI / 2; // 最初の頂点は真上
-    for (let i = 0; i < n; i++) {
-      const a = phi0 + (i * 2 * Math.PI) / n;
-      this.verts.push({ x: CX + R * Math.cos(a), y: CY + R * Math.sin(a) });
-    }
-    this.edgeLen = 2 * R * Math.sin(Math.PI / n);
-    this.P = this.edgeLen * n;
-    this.edges = [];
-    for (let i = 0; i < n; i++) {
-      const a = this.verts[i];
-      const b = this.verts[(i + 1) % n];
-      const ux = (b.x - a.x) / this.edgeLen;
-      const uy = (b.y - a.y) / this.edgeLen;
-      const mx = (a.x + b.x) / 2 - CX;
-      const my = (a.y + b.y) / 2 - CY;
-      const ml = Math.hypot(mx, my);
-      this.edges.push({ a, b, ux, uy, nx: mx / ml, ny: my / ml });
-    }
-  }
-
-  wrap(s) {
-    return ((s % this.P) + this.P) % this.P;
-  }
-
-  /** 2つの周長パラメータの符号つき最短差 */
-  diff(a, b) {
-    return this.wrap(a - b + this.P / 2) - this.P / 2;
-  }
-
-  /** 周長パラメータ s の点・辺方向・外向き法線 */
-  pointAt(s) {
-    s = this.wrap(s);
-    let idx = Math.floor(s / this.edgeLen);
-    if (idx >= this.n) idx = this.n - 1;
-    const t = s - idx * this.edgeLen;
-    const e = this.edges[idx];
-    return {
-      x: e.a.x + e.ux * t,
-      y: e.a.y + e.uy * t,
-      ux: e.ux,
-      uy: e.uy,
-      nx: e.nx,
-      ny: e.ny,
-    };
-  }
-
-  /** 中心から角度 θ の方向に伸ばした半直線が外周と交わる点の周長パラメータ */
-  angleToS(theta) {
-    const phi0 = -Math.PI / 2;
-    const span = (2 * Math.PI) / this.n;
-    let rel = (theta - phi0) % (2 * Math.PI);
-    if (rel < 0) rel += 2 * Math.PI;
-    let idx = Math.floor(rel / span);
-    if (idx >= this.n) idx = this.n - 1;
-    const e = this.edges[idx];
-    // center + t*d = a + u*(b-a) を u について解く
-    const dx = Math.cos(theta);
-    const dy = Math.sin(theta);
-    const ex = e.b.x - e.a.x;
-    const ey = e.b.y - e.a.y;
-    const fx = e.a.x - CX;
-    const fy = e.a.y - CY;
-    const denom = dx * ey - dy * ex;
-    let u = 0.5;
-    if (Math.abs(denom) > 1e-9) u = (fx * dy - fy * dx) / denom;
-    u = clamp(u, 0, 1);
-    return this.wrap(idx * this.edgeLen + u * this.edgeLen);
-  }
-
-  /** 凸多角形の辺の外側への最大はみ出し量(内側なら負) */
-  outsideBy(x, y) {
-    let max = -Infinity;
-    for (const e of this.edges) {
-      const d = (x - e.a.x) * e.nx + (y - e.a.y) * e.ny;
-      if (d > max) max = d;
-    }
-    return max;
-  }
+/** 人数 → アリーナの角数 */
+function sidesForPlayers(count) {
+  if (count <= 1) return 3;
+  if (count === 2) return 4;
+  return count; // 3人=三角形, 4人=正方形
 }
 
-class PolygonGame {
+/** 人数 → 担当する辺のインデックス(辺0が画面下の水平辺) */
+function edgeAssignment(count, n) {
+  if (count === 1) return [0]; // 底辺のみ、残りは壁
+  if (count === 2) return [0, 2]; // 正方形の下と上、左右は壁
+  return Array.from({ length: count }, (_, i) => i); // 全辺
+}
+
+/** 辺0の中点が画面の真下(角度+90°)に来る正n角形 */
+function buildArena(n) {
+  const phi0 = Math.PI / 2 - Math.PI / n;
+  const verts = [];
+  for (let i = 0; i < n; i++) {
+    const a = phi0 + (i * 2 * Math.PI) / n;
+    verts.push({ x: CX + R * Math.cos(a), y: CY + R * Math.sin(a) });
+  }
+  const edges = [];
+  for (let i = 0; i < n; i++) {
+    const a = verts[i];
+    const b = verts[(i + 1) % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = (b.x - a.x) / len;
+    const uy = (b.y - a.y) / len;
+    const mx = (a.x + b.x) / 2 - CX;
+    const my = (a.y + b.y) / 2 - CY;
+    const ml = Math.hypot(mx, my);
+    edges.push({ a, b, len, ux, uy, nx: mx / ml, ny: my / ml });
+  }
+  return { n, phi0, verts, edges };
+}
+
+class EdgesGame {
   constructor(players) {
     this.t = 0;
     this.lives = START_LIVES;
@@ -148,12 +98,28 @@ class PolygonGame {
     this.powerups = [];
     this.slowUntil = 0;
     this.rng = Math.random;
-    this.nextColor = 0;
-    this.geom = new PolyGeom(this.sidesForLevel(1));
-    this.banner = { text: this.bannerText(1), until: 1.4 };
+
+    const count = Math.max(1, players.length);
+    this.arena = buildArena(sidesForPlayers(count));
+    const assign = edgeAssignment(count, this.arena.n);
+    players.forEach((p, i) => {
+      const edgeIdx = assign[i];
+      const edge = this.arena.edges[edgeIdx];
+      this.players.set(p.id, {
+        id: p.id,
+        name: p.name,
+        score: 0,
+        edgeIdx,
+        t: edge.len / 2, // 辺に沿った中心位置(px)
+        targetT: null,
+        expandUntil: 0,
+        color: i % 8,
+      });
+    });
+
+    this.banner = { text: 'LEVEL 1', until: 1.4 };
     this.ballState = 'serving';
     this.serveAt = 1.8;
-    for (const p of players) this.addPlayer(p);
     this.buildBricks();
   }
 
@@ -161,30 +127,12 @@ class PolygonGame {
     return this.players.size;
   }
 
-  sidesForLevel(level) {
-    return LEVEL_SIDES[(level - 1) % LEVEL_SIDES.length];
-  }
-
-  bannerText(level) {
-    const n = this.sidesForLevel(level);
-    return `LEVEL ${level} — ${KANJI_NUM[n] || n}角形`;
-  }
-
-  addPlayer({ id, name }) {
-    if (this.players.has(id)) return;
-    const idx = this.players.size;
-    this.players.set(id, {
-      id,
-      name,
-      score: 0,
-      s: this.geom.wrap(((idx + 0.5) * this.geom.P) / 4),
-      targetS: null,
-      expandUntil: 0,
-      color: this.nextColor++ % 8,
-    });
+  addPlayer() {
+    // アリーナ形状が人数で固定されるため途中参加は不可(観戦のみ)
   }
 
   removePlayer(id) {
+    // 抜けたプレイヤーの辺は壁になる
     this.players.delete(id);
     for (const b of this.balls) {
       if (b.lastHitBy === id) b.lastHitBy = null;
@@ -193,27 +141,38 @@ class PolygonGame {
 
   handleInput(id, data) {
     const p = this.players.get(id);
-    if (!p || !data || typeof data.a !== 'number' || !Number.isFinite(data.a)) return;
-    p.targetS = this.geom.angleToS(data.a);
+    if (!p || !data || typeof data.t !== 'number' || !Number.isFinite(data.t)) return;
+    const edge = this.arena.edges[p.edgeIdx];
+    p.targetT = clamp(data.t, 0, 1) * edge.len;
   }
 
   paddleHalf(p) {
-    return p.expandUntil > this.t ? PADDLE_HALF * 1.5 : PADDLE_HALF;
+    const edge = this.arena.edges[p.edgeIdx];
+    const half = p.expandUntil > this.t ? PADDLE_HALF * 1.4 : PADDLE_HALF;
+    return Math.min(half, edge.len / 2 - 4);
   }
 
   ballSpeed() {
     return Math.min(BALL_BASE_SPEED + (this.level - 1) * 35, BALL_MAX_SPEED);
   }
 
+  wallEdges() {
+    const owned = new Set([...this.players.values()].map((p) => p.edgeIdx));
+    const walls = [];
+    for (let i = 0; i < this.arena.n; i++) {
+      if (!owned.has(i)) walls.push(i);
+    }
+    return walls;
+  }
+
   buildBricks() {
-    // アリーナと同じ角数のリングを同心状に並べ、各辺に沿ってブロックを敷き詰める
+    // アリーナと同じ角数・向きのリングを同心状に敷き詰める
     this.bricks = [];
     this.remainingBricks = 0;
-    const n = this.geom.n;
-    const phi0 = -Math.PI / 2;
+    const { n, phi0 } = this.arena;
     for (let ring = 0; ring < RINGS; ring++) {
       const rad = RING_BASE_RADIUS + ring * RING_STEP;
-      const hp = Math.min(3, RINGS - ring); // 内側ほど硬い
+      const hp = Math.min(3, RINGS - ring);
       const sideLen = 2 * rad * Math.sin(Math.PI / n);
       const count = Math.max(1, Math.floor((sideLen - BRICK_GAP) / (BRICK_W + BRICK_GAP)));
       const total = count * BRICK_W + (count - 1) * BRICK_GAP;
@@ -227,11 +186,9 @@ class PolygonGame {
         const start = (sideLen - total) / 2;
         for (let k = 0; k < count; k++) {
           const d = start + k * (BRICK_W + BRICK_GAP) + BRICK_W / 2;
-          const cx = v1.x + ux * d;
-          const cy = v1.y + uy * d;
           this.bricks.push({
-            x: cx,
-            y: cy,
+            x: v1.x + ux * d,
+            y: v1.y + uy * d,
             angle: Math.atan2(uy, ux),
             ux,
             uy,
@@ -244,18 +201,28 @@ class PolygonGame {
     }
   }
 
+  paddlePoint(p) {
+    const edge = this.arena.edges[p.edgeIdx];
+    const t = clamp(p.t, this.paddleHalf(p), edge.len - this.paddleHalf(p));
+    return {
+      x: edge.a.x + edge.ux * t,
+      y: edge.a.y + edge.uy * t,
+      edge,
+    };
+  }
+
   spawnBallAt(p, spreadDeg) {
-    const pt = this.geom.pointAt(p.s);
-    const x = pt.x - pt.nx * (PADDLE_THICK + BALL_R + 4);
-    const y = pt.y - pt.ny * (PADDLE_THICK + BALL_R + 4);
-    const toC = Math.atan2(CY - y, CX - x);
+    const { x, y, edge } = this.paddlePoint(p);
+    const bx = x - edge.nx * (PADDLE_THICK + BALL_R + 4);
+    const by = y - edge.ny * (PADDLE_THICK + BALL_R + 4);
+    const toC = Math.atan2(CY - by, CX - bx);
     const a = toC + ((this.rng() * 2 - 1) * spreadDeg * Math.PI) / 180;
     const speed = this.ballSpeed();
     this.balls.push({
-      x,
-      y,
-      prevX: x,
-      prevY: y,
+      x: bx,
+      y: by,
+      prevX: bx,
+      prevY: by,
       vx: Math.cos(a) * speed,
       vy: Math.sin(a) * speed,
       lastHitBy: p.id,
@@ -301,13 +268,11 @@ class PolygonGame {
     if (p) p.score += points;
   }
 
-  /** 回転矩形ブロックとの衝突(ローカル座標でAABB判定) */
   collideBricks(ball) {
     for (const b of this.bricks) {
       if (b.hp <= 0) continue;
       const hw = BRICK_W / 2;
       const hh = BRICK_H / 2;
-      // 法線方向(リング径方向)は ux,uy を90度回したもの
       const nx = -b.uy;
       const ny = b.ux;
       const rx = ball.x - b.x;
@@ -320,7 +285,6 @@ class PolygonGame {
       const dy = ly - cy;
       if (dx * dx + dy * dy > BALL_R * BALL_R) continue;
 
-      // 前フレーム位置(ローカル)で反射軸を決める
       const prx = ball.prevX - b.x;
       const pry = ball.prevY - b.y;
       const plx = prx * b.ux + pry * b.uy;
@@ -360,71 +324,87 @@ class PolygonGame {
           });
         }
       }
-      return; // 1tick 1ブロックまで
+      return;
     }
   }
 
-  /** パドル(外周に沿った円弧状の帯)との衝突。当たった位置で反射角が変わる */
+  /** 壁(担当者のいない辺)での反射 */
+  collideWalls(ball) {
+    for (const idx of this.wallEdges()) {
+      const e = this.arena.edges[idx];
+      const d = (ball.x - e.a.x) * e.nx + (ball.y - e.a.y) * e.ny;
+      if (d < -BALL_R) continue;
+      if (ball.vx * e.nx + ball.vy * e.ny <= 0) continue;
+      // 辺の範囲(角をふさぐため少し広げる)
+      const u = (ball.x - e.a.x) * e.ux + (ball.y - e.a.y) * e.uy;
+      if (u < -BALL_R * 2 || u > e.len + BALL_R * 2) continue;
+      const dot = ball.vx * e.nx + ball.vy * e.ny;
+      ball.vx -= 2 * dot * e.nx;
+      ball.vy -= 2 * dot * e.ny;
+      const push = d + BALL_R;
+      ball.x -= e.nx * push;
+      ball.y -= e.ny * push;
+      return;
+    }
+  }
+
+  /** 自分の辺の上をスライドするパドルとの衝突 */
   collidePaddles(ball) {
     const reach = BALL_R + PADDLE_THICK / 2;
     let best = null;
     for (const p of this.players.values()) {
+      const edge = this.arena.edges[p.edgeIdx];
       const half = this.paddleHalf(p);
-      // パドルを数本の線分に分割して最近接点を探す
-      const steps = Math.max(2, Math.ceil((half * 2) / 24));
-      let prev = this.geom.pointAt(p.s - half);
-      for (let i = 1; i <= steps; i++) {
-        const sSeg = p.s - half + ((half * 2) * i) / steps;
-        const cur = this.geom.pointAt(sSeg);
-        const ex = cur.x - prev.x;
-        const ey = cur.y - prev.y;
-        const len2 = ex * ex + ey * ey || 1;
-        let u = ((ball.x - prev.x) * ex + (ball.y - prev.y) * ey) / len2;
-        u = clamp(u, 0, 1);
-        const qx = prev.x + ex * u;
-        const qy = prev.y + ey * u;
-        const dist = Math.hypot(ball.x - qx, ball.y - qy);
-        if (dist <= reach && (!best || dist < best.dist)) {
-          const segS = this.geom.wrap(p.s - half + ((half * 2) * (i - 1 + u)) / steps);
-          best = { p, dist, qx, qy, segS, nx: cur.nx, ny: cur.ny, ux: cur.ux, uy: cur.uy };
-        }
-        prev = cur;
+      const t = clamp(p.t, half, edge.len - half);
+      const x1 = edge.a.x + edge.ux * (t - half);
+      const y1 = edge.a.y + edge.uy * (t - half);
+      const ex = edge.ux * (half * 2);
+      const ey = edge.uy * (half * 2);
+      const len2 = ex * ex + ey * ey || 1;
+      let u = ((ball.x - x1) * ex + (ball.y - y1) * ey) / len2;
+      u = clamp(u, 0, 1);
+      const qx = x1 + ex * u;
+      const qy = y1 + ey * u;
+      const dist = Math.hypot(ball.x - qx, ball.y - qy);
+      if (dist <= reach && (!best || dist < best.dist)) {
+        const hitT = t - half + u * half * 2;
+        best = { p, edge, dist, qx, qy, rel: clamp((hitT - t) / half, -1, 1) };
       }
     }
     if (!best) return;
-    // 外向きに動いているときだけ反射(内側から当たった場合のみ)
-    if (ball.vx * best.nx + ball.vy * best.ny <= 0) return;
+    if (ball.vx * best.edge.nx + ball.vy * best.edge.ny <= 0) return;
 
-    const p = best.p;
-    const half = this.paddleHalf(p);
-    let rel = clamp(this.geom.diff(best.segS, p.s) / half, -1, 1);
     // ど真ん中ヒットの垂直反射は永久ループになり得るため、わずかに乱す
+    let rel = best.rel;
     if (Math.abs(rel) < 0.06) {
       rel += (this.rng() < 0.5 ? -1 : 1) * (0.06 + this.rng() * 0.06);
     }
     const speed = Math.hypot(ball.vx, ball.vy);
-    // 基本は内向き(-法線)、当たった位置に応じて辺方向へ傾ける
     const cosA = Math.cos(rel * MAX_ANGLE);
     const sinA = Math.sin(rel * MAX_ANGLE);
-    ball.vx = (-best.nx * cosA + best.ux * sinA) * speed;
-    ball.vy = (-best.ny * cosA + best.uy * sinA) * speed;
-    ball.x = best.qx - best.nx * (reach + 0.5);
-    ball.y = best.qy - best.ny * (reach + 0.5);
-    ball.lastHitBy = p.id;
+    ball.vx = (-best.edge.nx * cosA + best.edge.ux * sinA) * speed;
+    ball.vy = (-best.edge.ny * cosA + best.edge.uy * sinA) * speed;
+    ball.x = best.qx - best.edge.nx * (reach + 0.5);
+    ball.y = best.qy - best.edge.ny * (reach + 0.5);
+    ball.lastHitBy = best.p.id;
+  }
+
+  outsideBy(x, y) {
+    let max = -Infinity;
+    for (const e of this.arena.edges) {
+      const d = (x - e.a.x) * e.nx + (y - e.a.y) * e.ny;
+      if (d > max) max = d;
+    }
+    return max;
   }
 
   advanceLevel() {
     this.level++;
-    this.geom = new PolyGeom(this.sidesForLevel(this.level));
-    for (const p of this.players.values()) {
-      p.s = this.geom.wrap(p.s);
-      p.targetS = null;
-    }
     this.buildBricks();
     this.balls = [];
     this.powerups = [];
     this.slowUntil = 0;
-    this.banner = { text: this.bannerText(this.level), until: this.t + 1.8 };
+    this.banner = { text: `LEVEL ${this.level}`, until: this.t + 1.8 };
     this.ballState = 'serving';
     this.serveAt = this.t + 2.2;
   }
@@ -445,13 +425,16 @@ class PolygonGame {
     this.t += dt;
     const slow = this.slowUntil > this.t ? 0.65 : 1;
 
-    // パドルを目標位置へ周回移動
+    // パドル移動(自分の辺の上だけ)
     for (const p of this.players.values()) {
-      if (p.targetS != null) {
-        const d = this.geom.diff(p.targetS, p.s);
+      const edge = this.arena.edges[p.edgeIdx];
+      const half = this.paddleHalf(p);
+      if (p.targetT != null) {
+        const target = clamp(p.targetT, half, edge.len - half);
         const maxMove = PADDLE_SPEED * dt;
-        p.s = this.geom.wrap(p.s + clamp(d, -maxMove, maxMove));
+        p.t += clamp(target - p.t, -maxMove, maxMove);
       }
+      p.t = clamp(p.t, half, edge.len - half);
     }
 
     // サーブ
@@ -472,9 +455,10 @@ class PolygonGame {
       ball.y += ball.vy * slow * dt;
 
       this.collidePaddles(ball);
+      this.collideWalls(ball);
       this.collideBricks(ball);
 
-      if (this.geom.outsideBy(ball.x, ball.y) > LOST_MARGIN) {
+      if (this.outsideBy(ball.x, ball.y) > LOST_MARGIN) {
         this.balls.splice(i, 1);
       }
     }
@@ -490,28 +474,26 @@ class PolygonGame {
       this.serveAt = this.t + 1.4;
     }
 
-    // パワーアップ(割れた位置から外周へ流れる)
+    // パワーアップ(外周へ流れる)
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const pu = this.powerups[i];
       pu.x += pu.vx * dt;
       pu.y += pu.vy * dt;
       let caught = null;
       for (const p of this.players.values()) {
+        const { x, y, edge } = this.paddlePoint(p);
         const half = this.paddleHalf(p);
-        const steps = 5;
-        for (let k = 0; k <= steps; k++) {
-          const pt = this.geom.pointAt(p.s - half + ((half * 2) * k) / steps);
-          if (Math.hypot(pu.x - pt.x, pu.y - pt.y) <= POWERUP_R + PADDLE_THICK) {
-            caught = p;
-            break;
-          }
+        const du = (pu.x - x) * edge.ux + (pu.y - y) * edge.uy;
+        const dn = (pu.x - x) * edge.nx + (pu.y - y) * edge.ny;
+        if (Math.abs(du) <= half + POWERUP_R && Math.abs(dn) <= PADDLE_THICK + POWERUP_R) {
+          caught = p;
+          break;
         }
-        if (caught) break;
       }
       if (caught) {
         this.applyPowerup(pu.type, caught);
         this.powerups.splice(i, 1);
-      } else if (this.geom.outsideBy(pu.x, pu.y) > LOST_MARGIN) {
+      } else if (this.outsideBy(pu.x, pu.y) > LOST_MARGIN) {
         this.powerups.splice(i, 1);
       }
     }
@@ -527,10 +509,7 @@ class PolygonGame {
     return {
       w: W,
       h: H,
-      cx: CX,
-      cy: CY,
-      n: this.geom.n,
-      r: R,
+      n: this.arena.n,
       lives: this.lives,
       level: this.level,
       banner: bannerActive ? this.banner.text : null,
@@ -539,15 +518,31 @@ class PolygonGame {
           ? round1(Math.max(0, this.serveAt - this.t))
           : 0,
       slow: this.slowUntil > this.t,
-      players: [...this.players.values()].map((p) => ({
-        id: p.id,
-        name: p.name,
-        score: p.score,
-        s: round1(p.s),
-        hw: round1(this.paddleHalf(p)),
-        color: p.color,
-        expanded: p.expandUntil > this.t,
-      })),
+      players: [...this.players.values()].map((p) => {
+        const edge = this.arena.edges[p.edgeIdx];
+        return {
+          id: p.id,
+          name: p.name,
+          score: p.score,
+          color: p.color,
+          expanded: p.expandUntil > this.t,
+          t: round1(clamp(p.t, this.paddleHalf(p), edge.len - this.paddleHalf(p))),
+          hw: round1(this.paddleHalf(p)),
+          ax: round1(edge.a.x),
+          ay: round1(edge.a.y),
+          bx: round1(edge.b.x),
+          by: round1(edge.b.y),
+        };
+      }),
+      walls: this.wallEdges().map((idx) => {
+        const e = this.arena.edges[idx];
+        return {
+          ax: round1(e.a.x),
+          ay: round1(e.a.y),
+          bx: round1(e.b.x),
+          by: round1(e.b.y),
+        };
+      }),
       balls: this.balls.map((b) => ({ x: round1(b.x), y: round1(b.y), r: BALL_R })),
       bricks: this.bricks
         .filter((b) => b.hp > 0)
@@ -571,14 +566,14 @@ class PolygonGame {
 
 module.exports = {
   meta: {
-    id: 'polygon',
-    name: 'ポリゴン・ブロック崩し',
+    id: 'edges',
+    name: 'エッジ・ディフェンス',
     description:
-      '中央のブロックを全方位から狙う協力ブロック崩し。n角形アリーナの外周をパドルで周回し、どこからボールが抜けてもライフを失う。レベルごとにアリーナの形が変化!',
+      '各プレイヤーがn角形の1辺を受け持つ協力ブロック崩し。自分の辺を抜かれるとみんなのライフが減る!誰もいない辺は壁が守る。人数でアリーナの形が変わる(1人=三角形 / 2人=正方形の上下 / 3人=三角形 / 4人=正方形)',
     minPlayers: 1,
     maxPlayers: 4,
-    allowJoinInProgress: true,
-    path: '/polygon/',
+    allowJoinInProgress: false,
+    path: '/edges/',
   },
-  Game: PolygonGame,
+  Game: EdgesGame,
 };

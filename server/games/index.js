@@ -5,11 +5,12 @@
 // 2. ここで require してリストに追加
 // 3. public/<id>/ にクライアントページを作成
 const breakout = require('./breakout');
+const edges = require('./edges');
 const polygon = require('./polygon');
 const pong = require('./pong');
 
 const GAMES = {};
-for (const mod of [breakout, polygon, pong]) {
+for (const mod of [breakout, edges, polygon, pong]) {
   GAMES[mod.meta.id] = mod;
 }
 

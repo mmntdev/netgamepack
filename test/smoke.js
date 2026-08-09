@@ -87,8 +87,10 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'polygon', 'pong'].every((id) => games.body.some((g) => g.id === id)),
-    'breakout / polygon / pong が登録されている'
+    ['breakout', 'edges', 'polygon', 'pong'].every((id) =>
+      games.body.some((g) => g.id === id)
+    ),
+    'breakout / edges / polygon / pong が登録されている'
   );
 }
 
@@ -217,6 +219,85 @@ async function testPolygon() {
 
   host.disconnect();
   guest.disconnect();
+  await sleep(300);
+}
+
+async function testEdges() {
+  console.log('エッジ・ディフェンス:');
+  const host = await connect();
+  const guest = await connect();
+
+  const created = await emitAck(host, 'room:create', { gameId: 'edges', name: 'した' });
+  check(created.ok === true, 'ルームを作成できる');
+  const joined = await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'うえ' });
+  check(joined.ok === true, '2人目が参加できる');
+
+  const started = await emitAck(host, 'room:start', {});
+  check(started.ok === true, 'ホストが開始できる');
+
+  const snap0 = await waitFor(guest, 'game:state');
+  check(snap0.n === 4, '2人プレイは正方形アリーナ');
+  check(snap0.walls.length === 2, '空いた2辺が壁になる');
+  check(snap0.players.length === 2, '各プレイヤーが辺を受け持つ');
+  check(
+    snap0.players.every((p) => typeof p.ax === 'number' && typeof p.t === 'number'),
+    'スナップショットに辺の端点とパドル位置が入っている'
+  );
+  check(snap0.bricks.length > 0, '中央にブロックが配置されている');
+
+  // ボールを自分の辺に射影して追いかけるAI
+  const chase = (socket) => {
+    const handler = (snap) => {
+      if (!snap.balls || snap.balls.length === 0) return;
+      const me = snap.players.find((p) => p.id === socket.id);
+      if (!me) return;
+      const ex = me.bx - me.ax;
+      const ey = me.by - me.ay;
+      const len = Math.hypot(ex, ey) || 1;
+      const b = snap.balls[0];
+      const du = ((b.x - me.ax) * ex + (b.y - me.ay) * ey) / (len * len);
+      socket.emit('game:input', { t: Math.max(0, Math.min(1, du)) });
+    };
+    socket.on('game:state', handler);
+    return () => socket.off('game:state', handler);
+  };
+  const stops = [chase(host), chase(guest)];
+
+  const initialBricks = snap0.bricks.length;
+  let lastSnap = snap0;
+  const collector = (snap) => (lastSnap = snap);
+  guest.on('game:state', collector);
+
+  await sleep(12000);
+  stops.forEach((f) => f());
+  guest.off('game:state', collector);
+
+  check(
+    lastSnap.bricks.length < initialBricks || lastSnap.level > 1,
+    `ブロックが減っている(${initialBricks} → ${lastSnap.bricks.length}, level=${lastSnap.level})`
+  );
+  const totalScore = lastSnap.players.reduce((s, p) => s + p.score, 0);
+  check(totalScore > 0, `スコアが加算されている(合計 ${totalScore})`);
+
+  // 片方が退出 → その辺が壁になりゲーム続行
+  const wallPromise = new Promise((resolve) => {
+    const handler = (snap) => {
+      if (snap.walls.length === 3 && snap.players.length === 1) {
+        host.off('game:state', handler);
+        resolve(snap);
+      }
+    };
+    host.on('game:state', handler);
+    setTimeout(() => {
+      host.off('game:state', handler);
+      resolve(null);
+    }, 4000);
+  });
+  guest.disconnect();
+  const wallSnap = await wallPromise;
+  check(!!wallSnap, '退出したプレイヤーの辺が壁に変わりゲーム続行');
+
+  host.disconnect();
   await sleep(300);
 }
 
@@ -355,6 +436,7 @@ async function main() {
     await testHttp();
     await testBreakout();
     await testPolygon();
+    await testEdges();
     await testPong();
     await testSpectatorRescue();
     await testValidation();
