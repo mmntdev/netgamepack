@@ -27,7 +27,13 @@
     pointerY = canvasY(e.clientY);
   });
 
+  function isTypingTarget(e) {
+    const t = e.target;
+    return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  }
+
   window.addEventListener('keydown', (e) => {
+    if (isTypingTarget(e) || !client.playing) return;
     if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') keyDir = -1;
     else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') keyDir = 1;
     else return;
@@ -40,6 +46,8 @@
       ((e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') && keyDir === 1)
     ) {
       keyDir = 0;
+      // 離した瞬間の最終位置を確実に送る
+      client.sendInput({ y: Math.round(keyTargetY * 10) / 10 });
     }
   });
 
@@ -77,8 +85,11 @@
     return a + (b - a) * t;
   }
 
+  const gameScreen = document.querySelector('[data-screen="game"]');
+
   function render() {
     requestAnimationFrame(render);
+    if (gameScreen.classList.contains('hidden')) return; // 非表示中は描画しない
     const rs = client.getRenderState();
 
     ctx.fillStyle = '#070b18';

@@ -58,6 +58,10 @@ class PongGame {
   removePlayer(id) {
     const p = this.players.get(id);
     if (!p) return;
+    // 退出者のスコアも結果に残すため、削除前に集計する
+    const rows = [...this.players.values()]
+      .map((q) => ({ name: q.name, score: q.score }))
+      .sort((a, b) => b.score - a.score);
     this.players.delete(id);
     this.sides[p.side] = null;
     if (!this.finished) {
@@ -65,7 +69,7 @@ class PongGame {
       this.finished = true;
       this.result = {
         title: other ? `${other.name} の勝ち!(相手が退出)` : '対戦相手がいなくなりました',
-        rows: [...this.players.values()].map((q) => ({ name: q.name, score: q.score })),
+        rows,
       };
     }
   }

@@ -51,6 +51,8 @@
       currAt: 0,
       lastInputAt: 0,
       lastInputJson: '',
+      pendingInput: null,
+      inputTimer: null,
     };
 
     // ---- URL の ?room=XXXX を参加欄にプリセット ----
@@ -190,12 +192,15 @@
     socket.on('room:update', (lobby) => {
       if (!state.inRoom && !state.pendingJoin) return;
       state.lobby = lobby;
-      if (state.playing) {
-        renderRoom(); // ゲーム画面上のコード表示など
-        updateResultButtons();
-      } else {
-        renderRoom();
+      // サーバー側でロールが変わる(観戦者→プレイヤー繰り上げ等)ことがあるため再同期する
+      const me = lobby.players.find((p) => p.id === state.you);
+      if (me && me.role !== state.role) {
+        const promoted = state.role === 'spectator' && me.role === 'player';
+        state.role = me.role;
+        if (promoted) toast('プレイヤーに繰り上がりました!');
       }
+      renderRoom();
+      updateResultButtons();
     });
 
     socket.on('game:start', () => {
@@ -349,13 +354,31 @@
       get playing() {
         return state.playing;
       },
-      /** 30Hz スロットリング + 差分送信つきの入力送信 */
+      /** 30Hz スロットリング + 差分送信つきの入力送信(最後の値はトレーリング送信で必ず届く) */
       sendInput(data) {
         if (!state.playing || state.role !== 'player') return;
-        const now = performance.now();
         const json = JSON.stringify(data);
-        if (now - state.lastInputAt < 33 && json === state.lastInputJson) return;
-        if (now - state.lastInputAt < 20) return;
+        if (json === state.lastInputJson && !state.pendingInput) return;
+        const now = performance.now();
+        const wait = 33 - (now - state.lastInputAt);
+        if (wait > 0) {
+          state.pendingInput = data;
+          if (!state.inputTimer) {
+            state.inputTimer = setTimeout(() => {
+              state.inputTimer = null;
+              const d = state.pendingInput;
+              state.pendingInput = null;
+              if (!d || !state.playing || state.role !== 'player') return;
+              const j = JSON.stringify(d);
+              if (j === state.lastInputJson) return;
+              state.lastInputAt = performance.now();
+              state.lastInputJson = j;
+              socket.emit('game:input', d);
+            }, wait + 2);
+          }
+          return;
+        }
+        state.pendingInput = null;
         state.lastInputAt = now;
         state.lastInputJson = json;
         socket.emit('game:input', data);

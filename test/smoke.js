@@ -198,9 +198,59 @@ async function testPong() {
     over && over.result && over.result.title.includes('ひだり'),
     `切断時に残った側の勝ちになる(${over && over.result && over.result.title})`
   );
+  check(
+    over && over.result && over.result.rows.length === 2,
+    '結果に退出者を含む両プレイヤーのスコアが載る'
+  );
+
+  // 観戦者が繰り上がって再戦できる
+  await sleep(300);
+  const restart = await emitAck(p1, 'room:start', {});
+  check(restart.ok === true, `観戦者が繰り上がって再戦できる(${restart.error || 'ok'})`);
 
   p1.disconnect();
   p3.disconnect();
+}
+
+async function testSpectatorRescue() {
+  console.log('観戦者の救済(ブロック崩し):');
+  // 4人プレイヤー + 1観戦者 → プレイヤー全員退出 → 観戦者に game:over が届き繰り上がる
+  const sockets = [];
+  for (let i = 0; i < 5; i++) sockets.push(await connect());
+  const [host, ...rest] = sockets;
+
+  const created = await emitAck(host, 'room:create', { gameId: 'breakout', name: 'P1' });
+  for (let i = 0; i < 3; i++) {
+    await emitAck(rest[i], 'room:join', { roomId: created.roomId, name: `P${i + 2}` });
+  }
+  const spectator = rest[3];
+  const specInfo = await emitAck(spectator, 'room:join', {
+    roomId: created.roomId,
+    name: 'けんぶつ',
+  });
+  check(specInfo.role === 'spectator', '5人目は観戦者になる');
+
+  await emitAck(host, 'room:start', {});
+  await waitFor(spectator, 'game:state');
+
+  const overPromise = waitFor(spectator, 'game:over');
+  const updatePromise = new Promise((resolve) => {
+    spectator.on('room:update', (lobby) => {
+      const me = lobby.players.find((p) => p.id === spectator.id);
+      if (me && me.role === 'player') resolve(lobby);
+    });
+  });
+  for (const s of [host, rest[0], rest[1], rest[2]]) s.disconnect();
+
+  const over = await overPromise;
+  check(
+    over && over.result && over.result.title.includes('退出'),
+    '全プレイヤー退出時に観戦者へ game:over が届く'
+  );
+  await Promise.race([updatePromise, sleep(2000).then(() => null)]).then((lobby) => {
+    check(!!lobby, '残った観戦者がプレイヤーに繰り上がる');
+  });
+  spectator.disconnect();
 }
 
 async function testValidation() {
@@ -251,6 +301,7 @@ async function main() {
     await testHttp();
     await testBreakout();
     await testPong();
+    await testSpectatorRescue();
     await testValidation();
   } catch (err) {
     failures++;

@@ -12,7 +12,8 @@ const MAX_NAME_LEN = 12;
 
 function sanitizeName(raw, fallback) {
   const name = String(raw == null ? '' : raw)
-    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .slice(0, 100)
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, '')
     .trim()
     .slice(0, MAX_NAME_LEN);
   return name || fallback;
@@ -87,21 +88,32 @@ class RoomManager {
       this.safeAck(ack, () => this.joinRoom(socket, payload));
     });
     socket.on('room:leave', (payload, ack) => {
-      this.leaveRoom(socket);
-      this.safeAck(ack, () => ({ ok: true }));
+      this.safeAck(ack, () => {
+        this.leaveRoom(socket);
+        return { ok: true };
+      });
     });
     socket.on('room:start', (payload, ack) => {
       this.safeAck(ack, () => this.startGame(socket));
     });
+    // ack のないハンドラも try/catch で守り、ゲームモジュールの例外でプロセスが落ちないようにする
     socket.on('game:input', (payload) => {
-      const room = this.roomOf(socket);
-      if (!room || room.status !== 'playing' || !room.game) return;
-      const client = room.clients.get(socket.id);
-      if (!client || client.role !== 'player') return;
-      room.game.handleInput(socket.id, payload);
+      try {
+        const room = this.roomOf(socket);
+        if (!room || room.status !== 'playing' || !room.game) return;
+        const client = room.clients.get(socket.id);
+        if (!client || client.role !== 'player') return;
+        room.game.handleInput(socket.id, payload);
+      } catch (err) {
+        console.error('input error:', err);
+      }
     });
     socket.on('disconnect', () => {
-      this.leaveRoom(socket);
+      try {
+        this.leaveRoom(socket);
+      } catch (err) {
+        console.error('disconnect error:', err);
+      }
     });
   }
 
@@ -123,7 +135,10 @@ class RoomManager {
   createRoom(socket, payload) {
     if (socket.data.roomId) this.leaveRoom(socket);
     const gameId = payload && payload.gameId;
-    const gameMod = GAMES[gameId];
+    const gameMod =
+      typeof gameId === 'string' && Object.prototype.hasOwnProperty.call(GAMES, gameId)
+        ? GAMES[gameId]
+        : null;
     if (!gameMod) return { ok: false, error: '指定されたゲームが見つかりません' };
     if (this.rooms.size >= MAX_ROOMS) {
       return { ok: false, error: 'サーバーが満員です。しばらくしてからお試しください' };
@@ -203,26 +218,29 @@ class RoomManager {
     }
 
     if (room.hostId === socket.id) {
-      room.hostId = room.clients.keys().next().value;
+      // 可能ならプレイヤーへ、いなければ観戦者へホストを移譲
+      const firstPlayer = room.players[0];
+      room.hostId = firstPlayer ? firstPlayer.id : room.clients.keys().next().value;
     }
 
-    // 待機中なら観戦者を繰り上げてプレイヤーに
+    // 進行中のゲームの後始末。全プレイヤー退出時も必ず game:over を配信して
+    // 観戦者が固まった画面に取り残されないようにする
+    if (room.status === 'playing' && room.game) {
+      if (room.game.playerCount === 0 && !room.game.finished) {
+        room.game.finished = true;
+        room.game.result = { title: 'プレイヤーが全員退出しました', rows: [] };
+      }
+      if (room.game.finished) {
+        this.endGame(room);
+      }
+    }
+
+    // 待機中(ゲーム終了直後を含む)なら観戦者を繰り上げてプレイヤーに
     if (room.status === 'waiting') {
       const meta = room.gameMod.meta;
       for (const c of room.clients.values()) {
         if (room.players.length >= meta.maxPlayers) break;
         if (c.role === 'spectator') c.role = 'player';
-      }
-    }
-
-    // 進行中のゲームからプレイヤーが全員いなくなったら終了
-    if (room.status === 'playing' && room.game) {
-      if (room.game.finished) {
-        this.endGame(room);
-      } else if (room.game.playerCount === 0) {
-        this.stopLoop(room);
-        room.status = 'waiting';
-        room.game = null;
       }
     }
 
@@ -262,11 +280,11 @@ class RoomManager {
         this.tickRoom(room, dt);
       } catch (err) {
         console.error(`tick error in room ${room.id}:`, err);
-        this.stopLoop(room);
-        room.status = 'waiting';
-        room.game = null;
-        this.io.to(room.id).emit('room:closed', { reason: 'ゲームでエラーが発生しました' });
-        this.broadcastRoom(room);
+        if (room.game) {
+          room.game.finished = true;
+          room.game.result = { title: 'エラーによりゲームを終了しました', rows: [] };
+        }
+        this.endGame(room);
       }
     }, 1000 / TICK_HZ);
   }
