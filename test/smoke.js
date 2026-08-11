@@ -87,10 +87,10 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'edges', 'polygon', 'pong'].every((id) =>
+    ['breakout', 'edges', 'polygon', 'snake', 'pong'].every((id) =>
       games.body.some((g) => g.id === id)
     ),
-    'breakout / edges / polygon / pong が登録されている'
+    'breakout / edges / polygon / snake / pong が登録されている'
   );
 }
 
@@ -317,6 +317,88 @@ async function testEdges() {
   await sleep(300);
 }
 
+async function testSnake() {
+  console.log('マルチスネーク:');
+  const host = await connect();
+  const guest = await connect();
+
+  const created = await emitAck(host, 'room:create', { gameId: 'snake', name: 'へび1' });
+  check(created.ok === true, 'ルームを作成できる');
+  const joined = await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'へび2' });
+  check(joined.ok === true, '2人目が参加できる');
+
+  const started = await emitAck(host, 'room:start', {});
+  check(started.ok === true, 'ホストが開始できる');
+
+  const snap0 = await waitFor(guest, 'game:state');
+  check(snap0.players.length === 2, 'スネークが2匹いる');
+  check(snap0.food.length > 0, 'エサが配置されている');
+  check(snap0.timeLeft > 0 && snap0.timeLeft <= 120, '残り時間が設定されている');
+
+  // カウントダウン明けまで待ち、頭が動いていることを確認
+  await sleep(4000);
+  const snapA = await waitFor(guest, 'game:state');
+  await sleep(700);
+  const snapB = await waitFor(guest, 'game:state');
+  const headOf = (snap, id) => {
+    const p = snap.players.find((q) => q.id === id);
+    return p && p.alive && p.body.length >= 2 ? [p.body[0], p.body[1]] : null;
+  };
+  const a = headOf(snapA, host.id);
+  const b = headOf(snapB, host.id);
+  check(
+    !!a && !!b && (a[0] !== b[0] || a[1] !== b[1]),
+    `スネークが移動している(${a} → ${b})`
+  );
+  check(snapB.timeLeft < snap0.timeLeft, '残り時間が減っている');
+
+  // guest を上の壁に誘導して死亡→リスポーンを確認
+  const deathAndRespawn = new Promise((resolve) => {
+    let died = false;
+    const handler = (snap) => {
+      const me = snap.players.find((q) => q.id === guest.id);
+      if (!me) return;
+      if (!died) {
+        if (!me.alive) {
+          died = true;
+          return;
+        }
+        if (me.body.length < 4) return;
+        const [hx, hy, nx, ny] = me.body;
+        if (hy < ny) return; // 既に上向き → 壁へ一直線
+        if (hy > ny) guest.emit('game:input', { d: 1 }); // 下向き → まず右へ
+        else guest.emit('game:input', { d: 0 }); // 横向き → 上へ
+        void hx;
+        void nx;
+      } else if (me.alive) {
+        guest.off('game:state', handler);
+        resolve(true);
+      }
+    };
+    guest.on('game:state', handler);
+    setTimeout(() => {
+      guest.off('game:state', handler);
+      resolve(false);
+    }, 15000);
+  });
+  check(await deathAndRespawn, '壁に衝突して死亡 → リスポーンする');
+
+  // 進行中でもプレイヤーとして途中参加できる
+  const late = await connect();
+  const lateJoin = await emitAck(late, 'room:join', { roomId: created.roomId, name: '途中' });
+  check(lateJoin.ok === true && lateJoin.role === 'player', '途中参加がプレイヤーになる');
+  const lateSnap = await waitFor(late, 'game:state');
+  check(
+    lateSnap.players.some((p) => p.name === '途中'),
+    '途中参加のスネークが追加される'
+  );
+
+  host.disconnect();
+  guest.disconnect();
+  late.disconnect();
+  await sleep(300);
+}
+
 async function testPong() {
   console.log('PONG:');
   const p1 = await connect();
@@ -453,6 +535,7 @@ async function main() {
     await testBreakout();
     await testPolygon();
     await testEdges();
+    await testSnake();
     await testPong();
     await testSpectatorRescue();
     await testValidation();
