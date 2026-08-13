@@ -7,12 +7,13 @@
 const breakout = require('./breakout');
 const edges = require('./edges');
 const kitchen = require('./kitchen');
+const kitchenbattle = require('./kitchenbattle');
 const polygon = require('./polygon');
 const snake = require('./snake');
 const pong = require('./pong');
 
 const GAMES = {};
-for (const mod of [breakout, edges, kitchen, polygon, snake, pong]) {
+for (const mod of [breakout, edges, kitchen, kitchenbattle, polygon, snake, pong]) {
   GAMES[mod.meta.id] = mod;
 }
 

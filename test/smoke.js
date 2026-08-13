@@ -87,10 +87,10 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'edges', 'kitchen', 'polygon', 'snake', 'pong'].every((id) =>
+    ['breakout', 'edges', 'kitchen', 'kitchenbattle', 'polygon', 'snake', 'pong'].every((id) =>
       games.body.some((g) => g.id === id)
     ),
-    '全6ゲームが登録されている'
+    '全7ゲームが登録されている'
   );
 }
 
@@ -432,6 +432,99 @@ async function testKitchen() {
   await sleep(300);
 }
 
+function testKitchenBattleLogic() {
+  console.log('キッチンバトル(対戦ロジック):');
+  const { Game } = require('../server/games/kitchenbattle.js');
+  const T = 52;
+  const dt = 1 / 60;
+  const g = new Game([
+    { id: 'a1', name: '青1' },
+    { id: 'b1', name: '桃1' },
+    { id: 'a2', name: '青2' },
+    { id: 'b2', name: '桃2' },
+  ]);
+  const teams = ['a1', 'b1', 'a2', 'b2'].map((id) => g.players.get(id).team);
+  check(JSON.stringify(teams) === '[0,1,0,1]', 'チームが交互に割り当てられる');
+
+  for (let i = 0; i < 200; i++) g.tick(dt);
+  const p = g.players.get('a1');
+  const q = g.players.get('b1');
+  const at = (pl, c, r, f) => {
+    pl.x = (c + 0.5) * T;
+    pl.y = (r + 0.5) * T;
+    pl.facing = f;
+  };
+  const act = (pl) => g.action(pl);
+
+  // 左チームのサラダ提供
+  at(p, 1, 1, 3); act(p);
+  at(p, 1, 3, 3); act(p); act(p); act(p); act(p); act(p);
+  at(p, 1, 1, 0); act(p);
+  at(p, 1, 7, 2); act(p);
+  at(p, 1, 1, 0); act(p);
+  at(p, 6, 3, 1); act(p);
+  check(g.teamScores[0] === 20, '左チームがサラダ提供で+20');
+
+  // 右チームも提供できる(共有注文を追加してから)
+  g.addOrder('salad');
+  at(q, 13, 1, 1); act(q);
+  at(q, 13, 3, 1); act(q); act(q); act(q); act(q); act(q);
+  at(q, 13, 1, 0); act(q);
+  at(q, 12, 7, 2); act(q);
+  at(q, 13, 1, 0); act(q);
+  at(q, 8, 3, 3); act(q);
+  check(g.teamScores[1] === 20, '右チームも提供で+20');
+
+  // 中央カウンター共用(妨害)
+  at(p, 1, 1, 3); act(p);
+  at(p, 6, 1, 1); act(p);
+  check(g.counterItems.has('7,1'), '中央カウンターに置ける');
+  at(q, 8, 1, 3); act(q);
+  check(q.carry && q.carry.type === 'lettuce', '相手チームが中央カウンターから取れる');
+
+  // 中央の壁は通れない
+  at(p, 6, 6, 1);
+  p.mx = 1;
+  p.my = 0;
+  for (let i = 0; i < 120; i++) g.tick(dt);
+  check(p.x < 7 * T, '中央の壁は通り抜けられない');
+
+  // 勝敗判定
+  g.teamScores[0] = 100;
+  g.teamScores[1] = 60;
+  g.finish();
+  check(g.result.title.includes('ブルー'), `勝敗タイトル(${g.result.title})`);
+}
+
+async function testKitchenBattle() {
+  console.log('キッチンバトル(通信):');
+  const p1 = await connect();
+  const p2 = await connect();
+
+  const created = await emitAck(p1, 'room:create', { gameId: 'kitchenbattle', name: 'あお' });
+  check(created.ok === true, 'ルームを作成できる');
+
+  const early = await emitAck(p1, 'room:start', {});
+  check(early.ok === false, '1人では開始できない');
+
+  const joined = await emitAck(p2, 'room:join', { roomId: created.roomId, name: 'もも' });
+  check(joined.ok === true, '2人目が参加できる');
+
+  const started = await emitAck(p1, 'room:start', {});
+  check(started.ok === true, '2人揃えば開始できる(1vs1)');
+
+  const snap = await waitFor(p2, 'game:state');
+  check(Array.isArray(snap.teamScores) && snap.teamScores.length === 2, 'チームスコアが届く');
+  const t1 = snap.players.find((p) => p.id === p1.id);
+  const t2 = snap.players.find((p) => p.id === p2.id);
+  check(t1 && t2 && t1.team !== t2.team, '2人が別チームに分かれる');
+  check(t1.x < snap.w / 2 === (t1.team === 0), 'チームに応じた側にスポーンする');
+
+  p1.disconnect();
+  p2.disconnect();
+  await sleep(300);
+}
+
 async function testSnake() {
   console.log('マルチスネーク:');
   const host = await connect();
@@ -652,6 +745,8 @@ async function main() {
     await testEdges();
     testKitchenLogic();
     await testKitchen();
+    testKitchenBattleLogic();
+    await testKitchenBattle();
     await testSnake();
     await testPong();
     await testSpectatorRescue();
