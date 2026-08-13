@@ -456,24 +456,24 @@ function testKitchenBattleLogic() {
   };
   const act = (pl) => g.action(pl);
 
-  // 左チームのサラダ提供
+  // 左チームのサラダ提供(窓口は自陣の左壁 col0,row6)
   at(p, 1, 1, 3); act(p);
   at(p, 1, 3, 3); act(p); act(p); act(p); act(p); act(p);
   at(p, 1, 1, 0); act(p);
   at(p, 1, 7, 2); act(p);
   at(p, 1, 1, 0); act(p);
-  at(p, 6, 3, 1); act(p);
-  check(g.teamScores[0] === 20, '左チームがサラダ提供で+20');
+  at(p, 1, 6, 3); act(p);
+  check(g.teamScores[0] === 20, '左チームが自陣の窓口で提供+20');
 
-  // 右チームも提供できる(共有注文を追加してから)
+  // 右チームも提供できる(共有注文を追加してから。窓口は右壁 col14,row6)
   g.addOrder('salad');
   at(q, 13, 1, 1); act(q);
   at(q, 13, 3, 1); act(q); act(q); act(q); act(q); act(q);
   at(q, 13, 1, 0); act(q);
   at(q, 12, 7, 2); act(q);
   at(q, 13, 1, 0); act(q);
-  at(q, 8, 3, 3); act(q);
-  check(g.teamScores[1] === 20, '右チームも提供で+20');
+  at(q, 13, 6, 1); act(q);
+  check(g.teamScores[1] === 20, '右チームも自陣の窓口で提供+20');
 
   // 中央カウンター共用(妨害)
   at(p, 1, 1, 3); act(p);
