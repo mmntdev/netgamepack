@@ -23,17 +23,28 @@ class Room {
   constructor(id, gameMod) {
     this.id = id;
     this.gameMod = gameMod;
-    this.clients = new Map(); // socketId -> { id, name, role: 'player'|'spectator' }
+    this.clients = new Map(); // socketId -> { id, name, role: 'player'|'spectator', isBot? }
     this.hostId = null;
     this.status = 'waiting'; // 'waiting' | 'playing'
     this.game = null;
     this.interval = null;
     this.tickCount = 0;
     this.lastResult = null;
+    this.botSeq = 0;
   }
 
   get players() {
     return [...this.clients.values()].filter((c) => c.role === 'player');
+  }
+
+  get bots() {
+    return [...this.clients.values()].filter((c) => c.isBot);
+  }
+
+  get humanCount() {
+    let n = 0;
+    for (const c of this.clients.values()) if (!c.isBot) n++;
+    return n;
   }
 
   lobbyState() {
@@ -50,6 +61,7 @@ class Room {
         id: c.id,
         name: c.name,
         role: c.role,
+        isBot: !!c.isBot,
       })),
     };
   }
@@ -95,6 +107,12 @@ class RoomManager {
     });
     socket.on('room:start', (payload, ack) => {
       this.safeAck(ack, () => this.startGame(socket));
+    });
+    socket.on('room:addBot', (payload, ack) => {
+      this.safeAck(ack, () => this.addBot(socket));
+    });
+    socket.on('room:removeBot', (payload, ack) => {
+      this.safeAck(ack, () => this.removeBot(socket));
     });
     // ack のないハンドラも try/catch で守り、ゲームモジュールの例外でプロセスが落ちないようにする
     socket.on('game:input', (payload) => {
@@ -200,6 +218,40 @@ class RoomManager {
     return { ok: true, roomId: room.id, you: socket.id, role, lobby: room.lobbyState() };
   }
 
+  addBot(socket) {
+    const room = this.roomOf(socket);
+    if (!room) return { ok: false, error: 'ルームに参加していません' };
+    if (room.hostId !== socket.id) return { ok: false, error: 'CPUを追加できるのはホストだけです' };
+    if (room.status !== 'waiting') return { ok: false, error: 'ゲーム中はCPUを追加できません' };
+    const meta = room.gameMod.meta;
+    if (room.players.length >= meta.maxPlayers) {
+      return { ok: false, error: 'プレイヤーが満員です' };
+    }
+    room.botSeq++;
+    const id = `bot-${room.id}-${room.botSeq}`;
+    room.clients.set(id, { id, name: `CPU${room.botSeq}`, role: 'player', isBot: true });
+    this.broadcastRoom(room);
+    return { ok: true };
+  }
+
+  removeBot(socket) {
+    const room = this.roomOf(socket);
+    if (!room) return { ok: false, error: 'ルームに参加していません' };
+    if (room.hostId !== socket.id) return { ok: false, error: 'CPUを削除できるのはホストだけです' };
+    if (room.status !== 'waiting') return { ok: false, error: 'ゲーム中はCPUを削除できません' };
+    const bots = room.bots;
+    if (bots.length === 0) return { ok: false, error: 'CPUがいません' };
+    room.clients.delete(bots[bots.length - 1].id);
+    // 待機中に枠が空いたので観戦者を繰り上げ
+    const meta = room.gameMod.meta;
+    for (const c of room.clients.values()) {
+      if (room.players.length >= meta.maxPlayers) break;
+      if (c.role === 'spectator') c.role = 'player';
+    }
+    this.broadcastRoom(room);
+    return { ok: true };
+  }
+
   leaveRoom(socket) {
     const room = this.roomOf(socket);
     socket.data.roomId = null;
@@ -212,15 +264,17 @@ class RoomManager {
       room.game.removePlayer(socket.id);
     }
 
-    if (room.clients.size === 0) {
+    // 人間が誰もいなくなったらルームを破棄(CPUだけのルームは残さない)
+    if (room.humanCount === 0) {
       this.destroyRoom(room);
       return;
     }
 
     if (room.hostId === socket.id) {
-      // 可能ならプレイヤーへ、いなければ観戦者へホストを移譲
-      const firstPlayer = room.players[0];
-      room.hostId = firstPlayer ? firstPlayer.id : room.clients.keys().next().value;
+      // 可能なら人間プレイヤーへ、いなければ人間の観戦者へホストを移譲
+      const humanPlayer = room.players.find((c) => !c.isBot);
+      const anyHuman = [...room.clients.values()].find((c) => !c.isBot);
+      room.hostId = humanPlayer ? humanPlayer.id : anyHuman ? anyHuman.id : null;
     }
 
     // 進行中のゲームの後始末。全プレイヤー退出時も必ず game:over を配信して
@@ -303,6 +357,16 @@ class RoomManager {
     }
     room.game.tick(dt);
     room.tickCount++;
+    // CPUの思考(10Hz)
+    if (room.tickCount % 6 === 0 && room.gameMod.botAct && !room.game.finished) {
+      for (const bot of room.bots) {
+        try {
+          room.gameMod.botAct(room.game, bot.id);
+        } catch (err) {
+          console.error(`bot error in room ${room.id}:`, err);
+        }
+      }
+    }
     if (room.game.finished) {
       this.io.to(room.id).emit('game:state', room.game.serialize());
       this.endGame(room);

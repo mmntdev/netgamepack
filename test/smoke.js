@@ -653,6 +653,58 @@ async function testPong() {
   p3.disconnect();
 }
 
+async function testBots() {
+  console.log('CPUプレイヤー:');
+  const host = await connect();
+  const guest = await connect();
+
+  // ブロック崩し: CPU追加/削除と、CPUが動くこと
+  const created = await emitAck(host, 'room:create', { gameId: 'breakout', name: 'ホスト' });
+  await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'ゲスト' });
+
+  const notHost = await emitAck(guest, 'room:addBot', {});
+  check(notHost.ok === false, 'ホスト以外はCPUを追加できない');
+
+  const updatePromise = waitFor(host, 'room:update');
+  const added = await emitAck(host, 'room:addBot', {});
+  check(added.ok === true, 'ホストはCPUを追加できる');
+  const update1 = await updatePromise;
+  check(
+    update1.players.some((p) => p.isBot && p.role === 'player'),
+    'ロビーにCPUがプレイヤーとして表示される'
+  );
+
+  const removed = await emitAck(host, 'room:removeBot', {});
+  check(removed.ok === true, 'CPUを削除できる');
+
+  await emitAck(host, 'room:addBot', {});
+  await emitAck(host, 'room:start', {});
+  const snap0 = await waitFor(host, 'game:state');
+  check(snap0.players.length === 3, 'CPU込みでゲームが始まる(パドル3枚)');
+  const botId = snap0.players.find((p) => p.id.startsWith('bot-')).id;
+  await sleep(4000);
+  const snap1 = await waitFor(host, 'game:state');
+  const b0 = snap0.players.find((p) => p.id === botId);
+  const b1 = snap1.players.find((p) => p.id === botId);
+  check(b0 && b1 && Math.abs(b1.x - b0.x) > 1, `CPUのパドルが動いている(${b0.x} → ${b1.x})`);
+
+  host.disconnect();
+  guest.disconnect();
+  await sleep(300);
+
+  // PONG: CPUを対戦相手にして1人で開始できる
+  const solo = await connect();
+  const pongRoom = await emitAck(solo, 'room:create', { gameId: 'pong', name: 'ひとり' });
+  await emitAck(solo, 'room:addBot', {});
+  const started = await emitAck(solo, 'room:start', {});
+  check(started.ok === true, 'PONGをCPU相手に1人で開始できる');
+  const pongSnap = await waitFor(solo, 'game:state');
+  check(pongSnap.paddles.filter(Boolean).length === 2, 'CPUのパドルが配置されている');
+  void pongRoom;
+  solo.disconnect();
+  await sleep(300);
+}
+
 async function testSpectatorRescue() {
   console.log('観戦者の救済(ブロック崩し):');
   // 4人プレイヤー + 1観戦者 → プレイヤー全員退出 → 観戦者に game:over が届き繰り上がる
@@ -749,6 +801,7 @@ async function main() {
     await testKitchenBattle();
     await testSnake();
     await testPong();
+    await testBots();
     await testSpectatorRescue();
     await testValidation();
   } catch (err) {

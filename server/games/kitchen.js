@@ -467,7 +467,10 @@ class KitchenGame {
   }
 }
 
+const makeKitchenBot = require('./lib/kitchenBot');
+
 module.exports = {
+  botAct: makeKitchenBot(LAYOUT, T),
   meta: {
     id: 'kitchen',
     name: 'クレイジーキッチン',

@@ -221,7 +221,25 @@ class PongGame {
   }
 }
 
+/** CPU: 自分側に向かってくるボールを追う。離れていくときは中央へ戻る */
+function botAct(game, id) {
+  const p = game.players.get(id);
+  if (!p) return;
+  let target = H / 2;
+  const ball = game.ball;
+  if (ball) {
+    const comingToMe = p.side === 0 ? ball.vx < 0 : ball.vx > 0;
+    if (comingToMe) {
+      target = ball.y + Math.sin(game.t * 2.3) * 22;
+    } else {
+      target = H / 2 + (ball.y - H / 2) * 0.3;
+    }
+  }
+  game.handleInput(id, { y: target });
+}
+
 module.exports = {
+  botAct,
   meta: {
     id: 'pong',
     name: '対戦 PONG',

@@ -470,7 +470,10 @@ class KitchenBattleGame {
   }
 }
 
+const makeKitchenBot = require('./lib/kitchenBot');
+
 module.exports = {
+  botAct: makeKitchenBot(LAYOUT, T),
   meta: {
     id: 'kitchenbattle',
     name: 'キッチンバトル 2vs2',

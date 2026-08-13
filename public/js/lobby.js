@@ -117,6 +117,7 @@
           const tag = document.createElement('span');
           tag.className = 'p-tag';
           const tags = [];
+          if (p.isBot) tags.push('🤖 CPU');
           if (p.id === lobby.hostId) tags.push('ホスト');
           if (p.role === 'spectator') tags.push('観戦');
           tag.textContent = tags.join(' / ');
@@ -128,11 +129,23 @@
       }
 
       const playerCount = lobby.players.filter((p) => p.role === 'player').length;
+      const botCount = lobby.players.filter((p) => p.isBot).length;
       const btnStart = $('btn-start');
       const hint = $('room-hint');
       if (btnStart) {
         btnStart.classList.toggle('hidden', !isHost());
         btnStart.disabled = playerCount < lobby.minPlayers;
+      }
+
+      // CPU追加/削除ボタン(ホストのみ・待機中のみ)
+      ensureBotControls();
+      const botControls = $('bot-controls');
+      if (botControls) {
+        botControls.classList.toggle('hidden', !isHost() || lobby.status !== 'waiting');
+        const btnAdd = $('btn-add-bot');
+        const btnRemove = $('btn-remove-bot');
+        if (btnAdd) btnAdd.disabled = playerCount >= lobby.maxPlayers;
+        if (btnRemove) btnRemove.disabled = botCount === 0;
       }
       if (hint) {
         if (lobby.status === 'playing') {
@@ -145,6 +158,41 @@
           hint.textContent = 'ホストがゲームを開始するのを待っています…';
         }
       }
+    }
+
+    function ensureBotControls() {
+      if ($('bot-controls') || !$('btn-start')) return;
+      const div = document.createElement('div');
+      div.id = 'bot-controls';
+      div.style.display = 'flex';
+      div.style.gap = '10px';
+
+      const btnAdd = document.createElement('button');
+      btnAdd.id = 'btn-add-bot';
+      btnAdd.className = 'btn secondary';
+      btnAdd.style.flex = '1';
+      btnAdd.textContent = '🤖 CPUを追加';
+      btnAdd.addEventListener('click', () => {
+        socket.emit('room:addBot', {}, (res) => {
+          if (res && !res.ok) toast(res.error || 'CPUを追加できませんでした');
+        });
+      });
+
+      const btnRemove = document.createElement('button');
+      btnRemove.id = 'btn-remove-bot';
+      btnRemove.className = 'btn secondary';
+      btnRemove.style.flex = '1';
+      btnRemove.textContent = 'CPUを削除';
+      btnRemove.addEventListener('click', () => {
+        socket.emit('room:removeBot', {}, (res) => {
+          if (res && !res.ok) toast(res.error || 'CPUを削除できませんでした');
+        });
+      });
+
+      div.appendChild(btnAdd);
+      div.appendChild(btnRemove);
+      const btnStart = $('btn-start');
+      btnStart.parentNode.insertBefore(div, btnStart);
     }
 
     function showResult(result) {

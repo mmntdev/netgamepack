@@ -341,7 +341,47 @@ class SnakeGame {
   }
 }
 
+/** CPU: 最寄りのエサへ向かう(1歩先の死だけ回避する貪欲AI) */
+function botAct(game, id) {
+  const p = game.players.get(id);
+  if (!p || !p.alive || p.body.length === 0) return;
+  const [hx, hy] = p.body[0];
+
+  let target = null;
+  let best = Infinity;
+  for (const f of game.food) {
+    const d = Math.abs(f.x - hx) + Math.abs(f.y - hy);
+    if (d < best) {
+      best = d;
+      target = f;
+    }
+  }
+
+  const occ = new Set();
+  for (const q of game.players.values()) {
+    if (!q.alive) continue;
+    for (const [x, y] of q.body) occ.add(key(x, y));
+  }
+
+  const lastQueued = p.queue.length > 0 ? p.queue[p.queue.length - 1] : p.dir;
+  const cand = [];
+  for (let d = 0; d < 4; d++) {
+    if ((d + 2) % 4 === lastQueued) continue;
+    const nx = hx + DIRS[d][0];
+    const ny = hy + DIRS[d][1];
+    if (nx < 0 || ny < 0 || nx >= CW || ny >= CH) continue;
+    if (occ.has(key(nx, ny))) continue;
+    let score = -(target ? Math.abs(target.x - nx) + Math.abs(target.y - ny) : 0);
+    if (d === lastQueued) score += 0.3; // 直進を少し優先してブレを減らす
+    cand.push({ d, score });
+  }
+  if (cand.length === 0) return;
+  cand.sort((a, b) => b.score - a.score);
+  if (cand[0].d !== lastQueued) game.handleInput(id, { d: cand[0].d });
+}
+
 module.exports = {
+  botAct,
   meta: {
     id: 'snake',
     name: 'マルチスネーク',

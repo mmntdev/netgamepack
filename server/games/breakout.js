@@ -421,7 +421,23 @@ class BreakoutGame {
   }
 }
 
+/** CPU: いちばん下にあるボールを追いかける(少し揺らぎあり) */
+function botAct(game, id) {
+  const p = game.players.get(id);
+  if (!p) return;
+  let target = W / 2;
+  if (game.balls.length > 0) {
+    let ball = game.balls[0];
+    for (const b of game.balls) {
+      if (b.y > ball.y) ball = b;
+    }
+    target = ball.x + Math.sin(game.t * 2.1 + p.color) * 18;
+  }
+  game.handleInput(id, { x: target });
+}
+
 module.exports = {
+  botAct,
   meta: {
     id: 'breakout',
     name: 'みんなでブロック崩し',

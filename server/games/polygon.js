@@ -569,7 +569,27 @@ class PolygonGame {
   }
 }
 
+/** CPU: 中心から最も遠い(=外周に近い)ボールの方角へ回り込む */
+function botAct(game, id) {
+  const p = game.players.get(id);
+  if (!p) return;
+  if (game.balls.length === 0) return;
+  let ball = game.balls[0];
+  let bd = -1;
+  for (const b of game.balls) {
+    const d = Math.hypot(b.x - CX, b.y - CY);
+    if (d > bd) {
+      bd = d;
+      ball = b;
+    }
+  }
+  const angle =
+    Math.atan2(ball.y - CY, ball.x - CX) + Math.sin(game.t * 1.7 + p.color) * 0.06;
+  game.handleInput(id, { a: angle });
+}
+
 module.exports = {
+  botAct,
   meta: {
     id: 'polygon',
     name: 'ポリゴン・ブロック崩し',

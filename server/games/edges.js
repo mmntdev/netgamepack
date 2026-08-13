@@ -564,7 +564,32 @@ class EdgesGame {
   }
 }
 
+/** CPU: 自分の辺に最も近いボールを辺上に射影して追いかける */
+function botAct(game, id) {
+  const p = game.players.get(id);
+  if (!p) return;
+  const edge = game.arena.edges[p.edgeIdx];
+  if (game.balls.length === 0) {
+    game.handleInput(id, { t: 0.5 });
+    return;
+  }
+  // 自分の辺への距離が最短のボール
+  let ball = game.balls[0];
+  let bd = Infinity;
+  for (const b of game.balls) {
+    const d = (b.x - edge.a.x) * edge.nx + (b.y - edge.a.y) * edge.ny;
+    if (Math.abs(d) < bd) {
+      bd = Math.abs(d);
+      ball = b;
+    }
+  }
+  const du = (ball.x - edge.a.x) * edge.ux + (ball.y - edge.a.y) * edge.uy;
+  const frac = Math.max(0, Math.min(1, du / edge.len + Math.sin(game.t * 1.9 + p.color) * 0.03));
+  game.handleInput(id, { t: frac });
+}
+
 module.exports = {
+  botAct,
   meta: {
     id: 'edges',
     name: 'エッジ・ディフェンス',
