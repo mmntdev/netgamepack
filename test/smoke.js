@@ -87,10 +87,10 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'edges', 'polygon', 'snake', 'pong'].every((id) =>
+    ['breakout', 'edges', 'kitchen', 'polygon', 'snake', 'pong'].every((id) =>
       games.body.some((g) => g.id === id)
     ),
-    'breakout / edges / polygon / snake / pong が登録されている'
+    '全6ゲームが登録されている'
   );
 }
 
@@ -317,6 +317,121 @@ async function testEdges() {
   await sleep(300);
 }
 
+function testKitchenLogic() {
+  console.log('クレイジーキッチン(調理ロジック):');
+  const { Game } = require('../server/games/kitchen.js');
+  const T = 56;
+  const dt = 1 / 60;
+  const g = new Game([{ id: 'p1', name: 'コック' }]);
+  const p = g.players.get('p1');
+  for (let i = 0; i < 200; i++) g.tick(dt); // カウントダウンを飛ばす
+  const at = (c, r, f) => {
+    p.x = (c + 0.5) * T;
+    p.y = (r + 0.5) * T;
+    p.facing = f;
+  };
+  const act = () => g.action(p);
+
+  // サラダ: レタス取得→切る→作業台→皿→盛る→提供(レタス箱は col8, row0)
+  at(8, 1, 0); act();
+  check(p.carry && p.carry.type === 'lettuce', 'レタスを取れる');
+  at(1, 3, 3); act(); act(); act(); act(); act();
+  check(p.carry && p.carry.chopped, '3回切って取り上げられる');
+  at(5, 3, 1); act();
+  at(2, 7, 2); act();
+  at(5, 3, 1); act();
+  check(p.carry && p.carry.type === 'plate' && p.carry.contents.includes('lettuce'), '皿に盛れる');
+  at(11, 3, 1); act();
+  check(g.teamScore === 20 && p.carry === null, 'サラダ提供で+20');
+
+  // スープ: 玉ねぎ3個→調理→完成→注ぐ→提供(玉ねぎ箱は col9, row0)
+  for (let i = 0; i < 3; i++) {
+    at(9, 1, 0); act();
+    at(1, 3, 3); act(); act(); act(); act(); act();
+    at(6, 7, 2); act();
+  }
+  const pot = g.pots[0];
+  check(pot.state === 'cooking', '玉ねぎ3個で調理開始');
+  for (let i = 0; i < 60 * 9; i++) g.tick(dt);
+  check(pot.state === 'done', '8秒で完成');
+  at(2, 7, 2); act();
+  at(6, 7, 2); act();
+  check(p.carry && p.carry.contents.includes('soup'), '皿にスープを注げる');
+  at(11, 3, 1); act();
+  check(g.teamScore === 60, 'スープ提供で+40');
+
+  // 焦げとリセット
+  for (let i = 0; i < 3; i++) {
+    at(9, 1, 0); act();
+    at(1, 3, 3); act(); act(); act(); act(); act();
+    at(6, 7, 2); act();
+  }
+  for (let i = 0; i < 60 * 19; i++) g.tick(dt);
+  check(pot.state === 'burnt', '放置すると焦げる');
+  at(6, 7, 2); act();
+  check(pot.state === 'empty', '手ぶらアクションで鍋をリセット');
+}
+
+async function testKitchen() {
+  console.log('クレイジーキッチン(通信):');
+  const host = await connect();
+  const guest = await connect();
+
+  const created = await emitAck(host, 'room:create', { gameId: 'kitchen', name: 'コック1' });
+  check(created.ok === true, 'ルームを作成できる');
+  const joined = await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'コック2' });
+  check(joined.ok === true, '2人目が参加できる');
+
+  await emitAck(host, 'room:start', {});
+  const snap0 = await waitFor(guest, 'game:state');
+  check(Array.isArray(snap0.layout) && snap0.layout.length === 9, 'キッチンレイアウトが届く');
+  check(snap0.orders.length >= 2, '注文が出ている');
+  check(snap0.players.length === 2, 'コックが2人いる');
+
+  // カウントダウン明けに右→上へ移動してレタス箱(col8)からレタスを取る
+  await sleep(3500);
+  const result = await new Promise((resolve) => {
+    let phase = 'right';
+    const handler = (snap) => {
+      const me = snap.players.find((q) => q.id === host.id);
+      if (!me) return;
+      if (phase === 'right') {
+        if (me.x < 8.35 * 56) {
+          host.emit('game:input', { x: 1, y: 0 });
+        } else {
+          phase = 'up';
+        }
+      }
+      if (phase === 'up') {
+        if (me.y > 1.7 * 56) {
+          host.emit('game:input', { x: 0, y: -1 });
+        } else {
+          host.emit('game:input', { x: 0, y: 0 });
+          host.emit('game:input', { a: 1 });
+          phase = 'grab';
+        }
+      } else if (phase === 'grab') {
+        if (me.carry) {
+          host.off('game:state', handler);
+          resolve(me.carry);
+        } else {
+          host.emit('game:input', { a: 1 });
+        }
+      }
+    };
+    host.on('game:state', handler);
+    setTimeout(() => {
+      host.off('game:state', handler);
+      resolve(null);
+    }, 12000);
+  });
+  check(result && result.type === 'lettuce', `移動してレタスを取れる(${result && result.type})`);
+
+  host.disconnect();
+  guest.disconnect();
+  await sleep(300);
+}
+
 async function testSnake() {
   console.log('マルチスネーク:');
   const host = await connect();
@@ -535,6 +650,8 @@ async function main() {
     await testBreakout();
     await testPolygon();
     await testEdges();
+    testKitchenLogic();
+    await testKitchen();
     await testSnake();
     await testPong();
     await testSpectatorRescue();
