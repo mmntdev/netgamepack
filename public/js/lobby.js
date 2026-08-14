@@ -258,6 +258,7 @@
       state.currSnap = null;
       hideResult();
       showScreen('game');
+      if (window.NetSfx) window.NetSfx.play('start');
       if (opts.onGameStart) opts.onGameStart();
     });
 
@@ -278,6 +279,7 @@
     socket.on('game:over', (payload) => {
       state.playing = false;
       showResult(payload && payload.result);
+      if (window.NetSfx) window.NetSfx.play('over');
       if (opts.onGameOver) opts.onGameOver(payload && payload.result);
     });
 

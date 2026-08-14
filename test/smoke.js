@@ -543,21 +543,30 @@ async function testSnake() {
   check(snap0.food.length > 0, 'エサが配置されている');
   check(snap0.timeLeft > 0 && snap0.timeLeft <= 120, '残り時間が設定されている');
 
-  // カウントダウン明けまで待ち、頭が動いていることを確認
-  await sleep(4000);
-  const snapA = await waitFor(guest, 'game:state');
-  await sleep(700);
+  // カウントダウン明けに、生存中の頭が動くことを観測する(死亡タイミングに左右されないように)
+  const moved = await new Promise((resolve) => {
+    let lastHead = null;
+    const handler = (snap) => {
+      const p = snap.players.find((q) => q.id === host.id);
+      if (!p || !p.alive || p.body.length < 2) {
+        lastHead = null;
+        return;
+      }
+      const head = p.body[0] + ',' + p.body[1];
+      if (lastHead && head !== lastHead) {
+        guest.off('game:state', handler);
+        resolve(true);
+      }
+      lastHead = head;
+    };
+    guest.on('game:state', handler);
+    setTimeout(() => {
+      guest.off('game:state', handler);
+      resolve(false);
+    }, 10000);
+  });
+  check(moved, 'スネークが移動している');
   const snapB = await waitFor(guest, 'game:state');
-  const headOf = (snap, id) => {
-    const p = snap.players.find((q) => q.id === id);
-    return p && p.alive && p.body.length >= 2 ? [p.body[0], p.body[1]] : null;
-  };
-  const a = headOf(snapA, host.id);
-  const b = headOf(snapB, host.id);
-  check(
-    !!a && !!b && (a[0] !== b[0] || a[1] !== b[1]),
-    `スネークが移動している(${a} → ${b})`
-  );
   check(snapB.timeLeft < snap0.timeLeft, '残り時間が減っている');
 
   // guest を上の壁に誘導して死亡→リスポーンを確認

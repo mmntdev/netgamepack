@@ -15,7 +15,60 @@
     life: { color: '#f472b6', label: '+' },
   };
 
-  const client = NetGame.createClient({ gameId: 'breakout' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+  let ballDeltas = [];
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    if (curr.level > prev.level) {
+      sfx('level');
+      ballDeltas = [];
+      return; // レベル切替時はブロック再配置なので他の判定はしない
+    }
+    const hpSum = (s) => s.bricks.reduce((a, b) => a + b.hp, 0);
+    if (curr.bricks.length < prev.bricks.length) sfx('break');
+    else if (hpSum(curr) < hpSum(prev)) sfx('brick');
+
+    if (curr.lives < prev.lives) sfx('life');
+    if (curr.balls.length > prev.balls.length && prev.balls.length > 0) sfx('multi');
+    else if (curr.balls.length < prev.balls.length && curr.lives === prev.lives) sfx('lost');
+
+    if (curr.powerups.length < prev.powerups.length) {
+      const gone = prev.powerups.filter(
+        (pu) => !curr.powerups.some((q) => Math.abs(q.x - pu.x) < 40 && Math.abs(q.y - pu.y) < 60)
+      );
+      if (gone.some((pu) => pu.y > curr.h - 110)) sfx('powerup');
+    }
+
+    // パドル反射(下向き → 上向きに転じた)
+    if (prev.balls.length === curr.balls.length) {
+      for (let i = 0; i < curr.balls.length; i++) {
+        const dy = curr.balls[i].y - prev.balls[i].y;
+        const pdy = ballDeltas[i];
+        if (pdy != null && pdy > 1 && dy < -1 && curr.balls[i].y > curr.h * 0.7) sfx('paddle');
+        ballDeltas[i] = dy;
+      }
+    } else {
+      ballDeltas = [];
+    }
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'breakout',
+    onGameStart() {
+      sfxPrev = null;
+      ballDeltas = [];
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力 ----
   let pointerX = null; // 論理座標での目標中心X

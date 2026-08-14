@@ -7,7 +7,43 @@
   const W = 800;
   const H = 600;
 
-  const client = NetGame.createClient({ gameId: 'snake' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    const me = curr.players.find((p) => p.id === client.you);
+    const pmMe = prev.players.find((p) => p.id === client.you);
+    if (me && pmMe) {
+      if (me.score > pmMe.score) sfx('eat');
+      if (pmMe.alive && !me.alive) sfx('die');
+      if (!pmMe.alive && me.alive) sfx('respawn');
+    }
+    // 開始カウントダウンと残り5秒のカウント
+    if (curr.countdown > 0 && Math.ceil(curr.countdown) !== Math.ceil(prev.countdown)) sfx('tick');
+    if (
+      curr.countdown <= 0 &&
+      curr.timeLeft <= 5 &&
+      Math.ceil(curr.timeLeft) !== Math.ceil(prev.timeLeft)
+    ) {
+      sfx('tick');
+    }
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'snake',
+    onGameStart() {
+      sfxPrev = null;
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力(0=上, 1=右, 2=下, 3=左) ----
   const KEY_DIRS = {

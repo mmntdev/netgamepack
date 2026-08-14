@@ -14,7 +14,57 @@
     ['#f472b6', '#fb7185'],
   ];
 
-  const client = NetGame.createClient({ gameId: 'kitchenbattle' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    for (const b of curr.boards) {
+      const pb = prev.boards.find((x) => x.c === b.c && x.r === b.r);
+      if (pb && b.item && pb.item && b.progress > pb.progress) sfx('chop');
+    }
+    for (const pot of curr.pots) {
+      const pp = prev.pots.find((x) => x.c === pot.c && x.r === pot.r);
+      if (!pp) continue;
+      if (pp.state !== 'done' && pot.state === 'done') sfx('ding');
+      if (pp.state !== 'burnt' && pot.state === 'burnt') sfx('burn');
+    }
+    // 自チームの提供はファンファーレ、相手チームは控えめな通知
+    const me = curr.players.find((p) => p.id === client.you);
+    const myTeam = me ? me.team : 0;
+    if (curr.teamScores[myTeam] > prev.teamScores[myTeam]) sfx('serve');
+    else if (curr.teamScores[1 - myTeam] > prev.teamScores[1 - myTeam]) sfx('score');
+    else if (curr.orders.length < prev.orders.length) sfx('expire');
+    if (curr.orders.length > prev.orders.length) sfx('order');
+
+    const pmMe = prev.players.find((p) => p.id === client.you);
+    if (me && pmMe) {
+      if (!pmMe.carry && me.carry) sfx('pick');
+      if (
+        pmMe.carry &&
+        !me.carry &&
+        curr.teamScores[myTeam] === prev.teamScores[myTeam]
+      ) {
+        sfx('place');
+      }
+    }
+    if (curr.countdown > 0 && Math.ceil(curr.countdown) !== Math.ceil(prev.countdown)) sfx('tick');
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'kitchenbattle',
+    onGameStart() {
+      sfxPrev = null;
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力 ----
   const pressed = new Set();

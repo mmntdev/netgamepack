@@ -10,7 +10,52 @@
   const ING_COLORS = { lettuce: '#22c55e', tomato: '#ef4444', onion: '#eab308' };
   const ING_EMOJI = { lettuce: '🥬', tomato: '🍅', onion: '🧅', soup: '🍲' };
 
-  const client = NetGame.createClient({ gameId: 'kitchen' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    // 包丁(どこかのまな板で進捗が増えた)
+    for (const b of curr.boards) {
+      const pb = prev.boards.find((x) => x.c === b.c && x.r === b.r);
+      if (pb && b.item && pb.item && b.progress > pb.progress) sfx('chop');
+    }
+    // 鍋の完成 / 焦げ
+    for (const pot of curr.pots) {
+      const pp = prev.pots.find((x) => x.c === pot.c && x.r === pot.r);
+      if (!pp) continue;
+      if (pp.state !== 'done' && pot.state === 'done') sfx('ding');
+      if (pp.state !== 'burnt' && pot.state === 'burnt') sfx('burn');
+    }
+    // 提供成功 / 注文
+    if (curr.teamScore > prev.teamScore) sfx('serve');
+    else if (curr.orders.length < prev.orders.length) sfx('expire');
+    if (curr.orders.length > prev.orders.length) sfx('order');
+    // 自分の持ち物の変化
+    const me = curr.players.find((p) => p.id === client.you);
+    const pmMe = prev.players.find((p) => p.id === client.you);
+    if (me && pmMe) {
+      if (!pmMe.carry && me.carry) sfx('pick');
+      if (pmMe.carry && !me.carry && curr.teamScore === prev.teamScore) sfx('place');
+    }
+    // 開始カウントダウン
+    if (curr.countdown > 0 && Math.ceil(curr.countdown) !== Math.ceil(prev.countdown)) sfx('tick');
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'kitchen',
+    onGameStart() {
+      sfxPrev = null;
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力 ----
   const pressed = new Set();

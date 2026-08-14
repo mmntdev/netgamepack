@@ -8,7 +8,48 @@
   const H = 500;
   const SIDE_COLORS = ['#38bdf8', '#f472b6'];
 
-  const client = NetGame.createClient({ gameId: 'pong' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+  let lastDx = null;
+  let lastDy = null;
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    const sum = (s) => s.paddles.reduce((a, p) => a + (p ? p.score : 0), 0);
+    if (sum(curr) > sum(prev)) {
+      sfx('score');
+      lastDx = null;
+      lastDy = null;
+    }
+    if (prev.ball && curr.ball) {
+      const dx = curr.ball.x - prev.ball.x;
+      const dy = curr.ball.y - prev.ball.y;
+      if (lastDx != null && Math.abs(dx) > 0.5 && Math.sign(dx) !== Math.sign(lastDx)) sfx('paddle');
+      if (lastDy != null && Math.abs(dy) > 0.5 && Math.sign(dy) !== Math.sign(lastDy)) sfx('wall');
+      lastDx = dx;
+      lastDy = dy;
+    } else {
+      lastDx = null;
+      lastDy = null;
+    }
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'pong',
+    onGameStart() {
+      sfxPrev = null;
+      lastDx = null;
+      lastDy = null;
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力 ----
   let pointerY = null;

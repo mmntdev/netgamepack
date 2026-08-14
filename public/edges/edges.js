@@ -16,7 +16,57 @@
   };
   const PADDLE_THICK = 14;
 
-  const client = NetGame.createClient({ gameId: 'edges' });
+  // ---- 効果音(スナップショット差分から検出) ----
+  function sfx(name) {
+    if (window.NetSfx) window.NetSfx.play(name);
+  }
+
+  let sfxPrev = null;
+  let radialDeltas = [];
+
+  function sfxDiff(prev, curr) {
+    if (!prev) return;
+    if (curr.level > prev.level) {
+      sfx('level');
+      radialDeltas = [];
+      return;
+    }
+    const hpSum = (s) => s.bricks.reduce((a, b) => a + b.hp, 0);
+    if (curr.bricks.length < prev.bricks.length) sfx('break');
+    else if (hpSum(curr) < hpSum(prev)) sfx('brick');
+
+    if (curr.lives < prev.lives) sfx('life');
+    if (curr.balls.length > prev.balls.length && prev.balls.length > 0) sfx('multi');
+    else if (curr.balls.length < prev.balls.length && curr.lives === prev.lives) sfx('lost');
+
+    if (curr.powerups.length < prev.powerups.length) sfx('powerup');
+
+    // 反射(外向き → 内向き。パドルでも壁でも鳴らす)
+    if (prev.balls.length === curr.balls.length) {
+      for (let i = 0; i < curr.balls.length; i++) {
+        const d =
+          Math.hypot(curr.balls[i].x - W / 2, curr.balls[i].y - H / 2) -
+          Math.hypot(prev.balls[i].x - W / 2, prev.balls[i].y - H / 2);
+        const pd = radialDeltas[i];
+        if (pd != null && pd > 1 && d < -1) sfx('paddle');
+        radialDeltas[i] = d;
+      }
+    } else {
+      radialDeltas = [];
+    }
+  }
+
+  const client = NetGame.createClient({
+    gameId: 'edges',
+    onGameStart() {
+      sfxPrev = null;
+      radialDeltas = [];
+    },
+    onGameState(snap) {
+      sfxDiff(sfxPrev, snap);
+      sfxPrev = snap;
+    },
+  });
 
   // ---- 入力 ----
   let pointerPos = null; // 論理座標
