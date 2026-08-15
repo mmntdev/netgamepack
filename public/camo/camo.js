@@ -294,6 +294,27 @@
     return a + (b - a) * t;
   }
 
+  // 背景には細かい質感(斑点)がある。体には無いので、ベタ塗りの体は「ツルッと」浮いて見える
+  let stageTexture = null;
+  function getStageTexture() {
+    if (stageTexture) return stageTexture;
+    const t = document.createElement('canvas');
+    t.width = 48;
+    t.height = 48;
+    const tc = t.getContext('2d');
+    let seed = 12345;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+    for (let i = 0; i < 16; i++) {
+      tc.fillStyle = i % 2 === 0 ? 'rgba(0,0,0,0.07)' : 'rgba(255,255,255,0.05)';
+      tc.fillRect(Math.floor(rnd() * 47), Math.floor(rnd() * 47), 1 + Math.floor(rnd() * 2), 1 + Math.floor(rnd() * 2));
+    }
+    stageTexture = ctx.createPattern(t, 'repeat');
+    return stageTexture;
+  }
+
   function drawStage(snap) {
     ctx.fillStyle = snap.palette[snap.base];
     ctx.fillRect(0, 0, snap.w, snap.h);
@@ -307,6 +328,9 @@
         ctx.fillRect(s.x, s.y, s.w, s.h);
       }
     }
+    // 質感を重ねる(ワールド座標に固定されるので体との差が出る)
+    ctx.fillStyle = getStageTexture();
+    ctx.fillRect(0, 0, snap.w, snap.h);
   }
 
   // ---- ミニマップ(ステージは静的なので1回だけ描いて使い回す) ----
@@ -373,10 +397,35 @@
     ctx.strokeRect(x0 + cam.x * sx, y0 + cam.y * sy, W * sx, H * sy);
   }
 
-  function drawBody(snap, p, x, y, alpha) {
+  function bodyPhase(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff;
+    return (h % 628) / 100;
+  }
+
+  function drawBody(snap, p, x, y, alpha, now) {
     const cell = snap.cell;
-    const left = x - (snap.bodyW * cell) / 2;
-    const top = y - (snap.bodyH * cell) / 2;
+    const bw = snap.bodyW * cell;
+    const bh = snap.bodyH * cell;
+
+    // 足元の影(体がどう塗られていても必ず出る実体の証拠)
+    if (p.alive) {
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.17)';
+      ctx.beginPath();
+      ctx.ellipse(x, y + bh / 2 + 2, bw * 0.55, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // 呼吸のゆらぎ(生きている間だけ。影は動かないので相対的なズレが見える)
+    let bob = 0;
+    if (p.alive && now != null) {
+      bob = Math.sin(now / 700 + bodyPhase(p.id)) * 1.2;
+    }
+    const left = x - bw / 2;
+    const top = y - bh / 2 + bob;
+
     ctx.globalAlpha = alpha;
     const isMe = p.id === client.you;
     for (let cy = 0; cy < snap.bodyH; cy++) {
@@ -431,6 +480,7 @@
       return;
     }
     const { prev, curr, alpha } = rs;
+    const now = performance.now();
     updateInput();
 
     const m = me(curr);
@@ -467,13 +517,13 @@
         continue;
       }
       if (!p.alive) {
-        drawBody(curr, p, x, y, 0.22);
+        drawBody(curr, p, x, y, 0.22, now);
         ctx.font = '16px sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('💀', x, y - 32);
         continue;
       }
-      drawBody(curr, p, x, y, 1);
+      drawBody(curr, p, x, y, 1, now);
       const isMe = p.id === client.you;
       const teammateVisible =
         curr.phase === 'hide' && myRole === 'hider' && !isMe; // 隠れ中は仲間が分かる
