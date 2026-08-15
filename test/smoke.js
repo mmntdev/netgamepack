@@ -731,7 +731,8 @@ async function testCamo() {
   check(started.ok === true, '2人で開始できる');
 
   const snap0 = await waitFor(p1, 'game:state');
-  check(snap0.shapes.length === 26 && snap0.palette.length === 12, 'ステージとパレットが届く');
+  check(snap0.shapes.length >= 40 && snap0.palette.length === 12, 'ステージとパレットが届く');
+  check(snap0.w > 800 && snap0.h > 600, `マップが1画面より広い(${snap0.w}x${snap0.h})`);
   const roles = snap0.players.map((p) => p.role).sort();
   check(
     roles.filter((r) => r === 'hunter').length === 1 &&

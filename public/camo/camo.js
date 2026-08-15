@@ -4,8 +4,9 @@
 
   const canvas = document.getElementById('game-canvas');
   const ctx = canvas.getContext('2d');
-  const W = 800;
+  const W = 800; // ビューポート(カメラ)サイズ。ワールドはもっと広い
   const H = 600;
+  const cam = { x: 0, y: 0 };
 
   // ---- 効果音 ----
   function sfx(name) {
@@ -70,9 +71,13 @@
     };
   }
 
-  function shoot(x, y) {
+  function shoot(screenX, screenY) {
     if (!client.playing || client.role !== 'player') return;
-    client.socket.emit('game:input', { sx: Math.round(x), sy: Math.round(y) });
+    // 画面座標 → ワールド座標
+    client.socket.emit('game:input', {
+      sx: Math.round(screenX + cam.x),
+      sy: Math.round(screenY + cam.y),
+    });
   }
 
   window.addEventListener('keydown', (e) => {
@@ -291,7 +296,7 @@
 
   function drawStage(snap) {
     ctx.fillStyle = snap.palette[snap.base];
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, snap.w, snap.h);
     for (const s of snap.shapes) {
       ctx.fillStyle = snap.palette[s.c];
       if (s.k === 0) {
@@ -302,6 +307,70 @@
         ctx.fillRect(s.x, s.y, s.w, s.h);
       }
     }
+  }
+
+  // ---- ミニマップ(ステージは静的なので1回だけ描いて使い回す) ----
+  const MINI_W = 200;
+  const MINI_H = 150;
+  let mini = null;
+  let miniKey = '';
+
+  function buildMini(snap) {
+    const key = `${snap.w}x${snap.h}:${snap.shapes.length}:${snap.shapes[0] ? snap.shapes[0].x : 0}`;
+    if (mini && miniKey === key) return;
+    miniKey = key;
+    mini = document.createElement('canvas');
+    mini.width = MINI_W;
+    mini.height = MINI_H;
+    const mctx = mini.getContext('2d');
+    const sx = MINI_W / snap.w;
+    const sy = MINI_H / snap.h;
+    mctx.fillStyle = snap.palette[snap.base];
+    mctx.fillRect(0, 0, MINI_W, MINI_H);
+    for (const s of snap.shapes) {
+      mctx.fillStyle = snap.palette[s.c];
+      if (s.k === 0) {
+        mctx.beginPath();
+        mctx.arc(s.x * sx, s.y * sy, s.r * sx, 0, Math.PI * 2);
+        mctx.fill();
+      } else {
+        mctx.fillRect(s.x * sx, s.y * sy, s.w * sx, s.h * sy);
+      }
+    }
+  }
+
+  function drawMinimap(snap, m) {
+    buildMini(snap);
+    if (!mini) return;
+    const x0 = W - MINI_W - 10;
+    const y0 = H - MINI_H - 10;
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(mini, x0, y0);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = 'rgba(232, 236, 255, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x0 - 0.5, y0 - 0.5, MINI_W + 1, MINI_H + 1);
+    const sx = MINI_W / snap.w;
+    const sy = MINI_H / snap.h;
+    // 鬼の位置は常に表示(カメレオン側の緊張感のため)
+    for (const p of snap.players) {
+      if (p.role !== 'hunter') continue;
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.arc(x0 + p.x * sx, y0 + p.y * sy, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 自分
+    if (m) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x0 + m.x * sx, y0 + m.y * sy, 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // 現在のビューポート
+    ctx.strokeStyle = 'rgba(232, 236, 255, 0.35)';
+    ctx.strokeRect(x0 + cam.x * sx, y0 + cam.y * sy, W * sx, H * sy);
   }
 
   function drawBody(snap, p, x, y, alpha) {
@@ -318,10 +387,18 @@
         ctx.fillRect(left + cx * cell, top + cy * cell, cell, cell);
       }
     }
-    // 小さな目(これだけが手がかり)
-    ctx.fillStyle = 'rgba(10, 10, 10, 0.85)';
-    ctx.fillRect(left + 2 * cell + 1, top + 2 * cell + 1, 2, 2);
-    ctx.fillRect(left + 7 * cell + 1, top + 2 * cell + 1, 2, 2);
+    // 目(唯一の手がかり: 白目+黒目でしっかり見えるサイズに)
+    const eyeY = top + 2.5 * cell;
+    for (const ex of [left + 2.5 * cell, left + 7.5 * cell]) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.arc(ex, eyeY, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#111827';
+      ctx.beginPath();
+      ctx.arc(ex, eyeY, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -355,12 +432,28 @@
     }
     const { prev, curr, alpha } = rs;
     updateInput();
-    drawStage(curr);
 
     const m = me(curr);
     const myRole = m ? m.role : 'spectator';
 
-    // プレイヤー描画
+    // カメラ: 自分(死亡時・観戦時は鬼か先頭プレイヤー)を追従
+    let camTarget = null;
+    if (m && m.alive) {
+      const pm = prev && prev.players && prev.players.find((q) => q.id === m.id);
+      camTarget = pm ? { x: lerp(pm.x, m.x, alpha), y: lerp(pm.y, m.y, alpha) } : m;
+    } else {
+      camTarget =
+        curr.players.find((p) => p.role === 'hunter') ||
+        curr.players[0] || { x: curr.w / 2, y: curr.h / 2 };
+    }
+    cam.x = Math.max(0, Math.min(curr.w - W, camTarget.x - W / 2));
+    cam.y = Math.max(0, Math.min(curr.h - H, camTarget.y - H / 2));
+
+    // ---- ワールド描画(カメラ変換) ----
+    ctx.save();
+    ctx.translate(-cam.x, -cam.y);
+    drawStage(curr);
+
     for (const p of curr.players) {
       let x = p.x;
       let y = p.y;
@@ -416,6 +509,10 @@
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+    ctx.restore();
+
+    // ---- 画面座標の描画(ミニマップ・照準・カーテン・HUD) ----
+    drawMinimap(curr, m);
 
     // 鬼の照準(自分が鬼のとき)
     if (m && m.role === 'hunter' && curr.phase === 'seek' && m.alive) {

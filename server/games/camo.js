@@ -4,8 +4,8 @@
 // カメレオン(隠れチーム)は真っ白な体に背景をスタンプ/手描きして擬態し、
 // ハンター(鬼チーム)は捜索フェーズで怪しい場所を撃って見つけ出す。
 
-const W = 800;
-const H = 600;
+const W = 1600; // 1画面(800x600)の4倍の広さ。クライアントはカメラスクロールで表示する
+const H = 1200;
 const COUNTDOWN = 3;
 const HIDE_TIME = 40; // 隠れフェーズ
 const SEEK_TIME = 90; // 捜索フェーズ
@@ -63,7 +63,7 @@ class CamoGame {
 
     // ステージ生成(円と矩形のカラフルなパッチワーク)
     this.shapes = [];
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 64; i++) {
       const kind = this.rng() < 0.5 ? 0 : 1; // 0=円, 1=矩形
       const c = 1 + Math.floor(this.rng() * (PALETTE.length - 1));
       if (kind === 0) {
@@ -71,12 +71,12 @@ class CamoGame {
           k: 0,
           x: Math.round(40 + this.rng() * (W - 80)),
           y: Math.round(40 + this.rng() * (H - 80)),
-          r: Math.round(35 + this.rng() * 90),
+          r: Math.round(40 + this.rng() * 110),
           c,
         });
       } else {
-        const w = Math.round(60 + this.rng() * 160);
-        const h = Math.round(40 + this.rng() * 120);
+        const w = Math.round(70 + this.rng() * 220),
+          h = Math.round(50 + this.rng() * 160);
         this.shapes.push({
           k: 1,
           x: Math.round(this.rng() * (W - w)),
