@@ -10,8 +10,8 @@
   const ING_COLORS = { lettuce: '#22c55e', tomato: '#ef4444', onion: '#eab308' };
   const ING_EMOJI = { lettuce: '🥬', tomato: '🍅', onion: '🧅', soup: '🍲' };
   const TEAM_COLORS = [
-    ['#38bdf8', '#22d3ee'],
-    ['#f472b6', '#fb7185'],
+    ['#38bdf8', '#22d3ee', '#818cf8'],
+    ['#f472b6', '#fb7185', '#c084fc'],
   ];
 
   // ---- 効果音(スナップショット差分から検出) ----

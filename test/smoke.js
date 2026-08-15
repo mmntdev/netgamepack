@@ -535,6 +535,22 @@ function testKitchenBattleLogic() {
   g.teamScores[1] = 60;
   g.finish();
   check(g.result.title.includes('ブルー'), `勝敗タイトル(${g.result.title})`);
+
+  // 5人 → 3対2の変則マッチ
+  const g5 = new Game(
+    ['a', 'b', 'c', 'd', 'e'].map((id, i) => ({ id, name: 'P' + (i + 1) }))
+  );
+  const count5 = [0, 0];
+  for (const pl of g5.players.values()) count5[pl.team]++;
+  check(count5[0] === 3 && count5[1] === 2, `5人で3対2に分かれる(${count5})`);
+  const positions = new Set(
+    [...g5.players.values()].map((pl) => `${Math.round(pl.x)},${Math.round(pl.y)}`)
+  );
+  check(positions.size === 5, '5人全員のスポーン位置が重ならない');
+  // 全員動けるか(壁にめり込んでいないか)
+  for (const pl of g5.players.values()) {
+    check(!g5.collides(pl.x, pl.y), `スポーンが床の上にある(${pl.name})`);
+  }
 }
 
 async function testKitchenBattle() {
