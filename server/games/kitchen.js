@@ -312,10 +312,41 @@ class KitchenGame {
       return;
     }
 
-    // 皿スタック
+    // 皿スタック(スタックの上に皿を1枚置いたまま盛り付けできる)
     if (ch === 'D') {
-      if (!carry) p.carry = { type: 'plate', contents: [] };
-      else if (carry.type === 'plate' && carry.contents.length === 0) p.carry = null; // 返却
+      const key = `${tc},${tr}`;
+      const slot = this.counterItems.get(key);
+      if (!carry) {
+        if (slot) {
+          p.carry = slot; // 置いてある皿を中身ごと取る
+          this.counterItems.delete(key);
+        } else {
+          p.carry = { type: 'plate', contents: [] }; // 新しい皿
+        }
+        return;
+      }
+      if (carry.type === 'plate') {
+        if (carry.contents.length === 0) {
+          p.carry = null; // 空の皿は返却
+          return;
+        }
+        if (!slot) {
+          this.counterItems.set(key, carry); // 中身入りの皿は上に仮置きできる
+          p.carry = null;
+        }
+        return;
+      }
+      // 刻んだ食材を持っていれば、スタックの上の皿に直接盛る(皿がなければ新しい皿に)
+      if (carry.chopped) {
+        if (!slot) {
+          if (carry.type === 'lettuce' || carry.type === 'tomato') {
+            this.counterItems.set(key, { type: 'plate', contents: [carry.type] });
+            p.carry = null;
+          }
+        } else if (slot.type === 'plate' && this.tryAddToPlate(slot, carry.type)) {
+          p.carry = null;
+        }
+      }
       return;
     }
 

@@ -391,6 +391,26 @@ function testKitchenLogic() {
   check(pot.state === 'cooking', '3個で調理再開');
   act();
   check(pot.state === 'filling' && pot.contents === 2, '調理中に取り出すと調理が中断される');
+
+  // 皿スタックの上に置いたまま盛り付け
+  at(9, 7, 2); act(); // 持っていた玉ねぎをゴミ箱へ
+  at(8, 1, 0); act(); // レタス
+  at(1, 3, 3); act(); act(); act(); act(); act(); // 刻んで持つ
+  at(2, 7, 2); act(); // 皿スタックへ直接
+  const staged = g.counterItems.get('2,8');
+  check(
+    p.carry === null && staged && staged.type === 'plate' && staged.contents.includes('lettuce'),
+    '皿スタックの上の皿に直接盛れる'
+  );
+  at(2, 7, 2); act(); // 手ぶらで中身ごと取る
+  check(
+    p.carry && p.carry.type === 'plate' && p.carry.contents.includes('lettuce'),
+    '置いた皿を中身ごと取れる'
+  );
+  g.addOrder('salad');
+  const sBefore = g.teamScore;
+  at(11, 3, 1); act();
+  check(g.teamScore === sBefore + 20, 'そのまま提供できる');
 }
 
 async function testKitchen() {
