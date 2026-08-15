@@ -370,6 +370,27 @@ function testKitchenLogic() {
   check(pot.state === 'burnt', '放置すると焦げる');
   at(6, 7, 2); act();
   check(pot.state === 'empty', '手ぶらアクションで鍋をリセット');
+
+  // 鍋からの取り出し
+  at(9, 1, 0); act();
+  at(1, 3, 3); act(); act(); act(); act(); act();
+  at(6, 7, 2); act();
+  check(pot.contents === 1 && p.carry === null, '鍋に玉ねぎを1個入れる');
+  act();
+  check(
+    p.carry && p.carry.type === 'onion' && p.carry.chopped && pot.contents === 0,
+    '手ぶらアクションで鍋から刻み玉ねぎを取り出せる'
+  );
+  act();
+  check(pot.contents === 1 && p.carry === null, '取り出した玉ねぎを鍋に戻せる');
+  for (let i = 0; i < 2; i++) {
+    at(9, 1, 0); act();
+    at(1, 3, 3); act(); act(); act(); act(); act();
+    at(6, 7, 2); act();
+  }
+  check(pot.state === 'cooking', '3個で調理再開');
+  act();
+  check(pot.state === 'filling' && pot.contents === 2, '調理中に取り出すと調理が中断される');
 }
 
 async function testKitchen() {

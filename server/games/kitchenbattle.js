@@ -302,6 +302,18 @@ class KitchenBattleGame {
         pot.doneT = 0;
         return;
       }
+      // 手ぶらなら鍋から刻み玉ねぎを1個取り出せる(調理中なら中断される)
+      if (
+        !carry &&
+        pot.contents > 0 &&
+        (pot.state === 'filling' || pot.state === 'cooking')
+      ) {
+        pot.contents--;
+        pot.state = pot.contents > 0 ? 'filling' : 'empty';
+        pot.cookT = 0;
+        p.carry = { type: 'onion', chopped: true };
+        return;
+      }
       if (!carry && pot.state === 'burnt') {
         pot.contents = 0;
         pot.state = 'empty';
