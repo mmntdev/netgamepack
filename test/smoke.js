@@ -87,10 +87,10 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'edges', 'kitchen', 'kitchenbattle', 'polygon', 'snake', 'pong'].every((id) =>
-      games.body.some((g) => g.id === id)
+    ['breakout', 'camo', 'edges', 'kitchen', 'kitchenbattle', 'polygon', 'snake', 'pong'].every(
+      (id) => games.body.some((g) => g.id === id)
     ),
-    '全7ゲームが登録されている'
+    '全8ゲームが登録されている'
   );
 }
 
@@ -719,6 +719,53 @@ async function testPong() {
   p3.disconnect();
 }
 
+async function testCamo() {
+  console.log('ぬりかくれカメレオン(通信):');
+  const p1 = await connect();
+  const p2 = await connect();
+
+  const created = await emitAck(p1, 'room:create', { gameId: 'camo', name: 'いろは' });
+  check(created.ok === true, 'ルームを作成できる');
+  await emitAck(p2, 'room:join', { roomId: created.roomId, name: 'にほへ' });
+  const started = await emitAck(p1, 'room:start', {});
+  check(started.ok === true, '2人で開始できる');
+
+  const snap0 = await waitFor(p1, 'game:state');
+  check(snap0.shapes.length === 26 && snap0.palette.length === 12, 'ステージとパレットが届く');
+  const roles = snap0.players.map((p) => p.role).sort();
+  check(
+    roles.filter((r) => r === 'hunter').length === 1 &&
+      roles.filter((r) => r === 'hider').length === 1,
+    '2人で鬼1・カメレオン1に分かれる'
+  );
+
+  // カメレオン側のソケットを特定して、隠れフェーズでスタンプ&手描き
+  const hiderId = snap0.players.find((p) => p.role === 'hider').id;
+  const hiderSock = hiderId === p1.id ? p1 : p2;
+  await sleep(3500); // 隠れフェーズへ
+  hiderSock.emit('game:input', { st: 1 });
+  hiderSock.emit('game:input', { p: [[0, 5]] });
+  const stamped = await new Promise((resolve) => {
+    const handler = (snap) => {
+      const h = snap.players.find((p) => p.id === hiderId);
+      if (h && h.body && h.body[0] === 5 && h.body.some((c) => c !== 0 && c !== 5)) {
+        hiderSock.off('game:state', handler);
+        resolve(true);
+      }
+    };
+    hiderSock.on('game:state', handler);
+    setTimeout(() => {
+      hiderSock.off('game:state', handler);
+      resolve(false);
+    }, 5000);
+  });
+  check(stamped, 'スタンプ擬態と手描きペイントが通信経由で反映される');
+
+  p1.disconnect();
+  p2.disconnect();
+  await sleep(300);
+}
+
 async function testBots() {
   console.log('CPUプレイヤー:');
   const host = await connect();
@@ -867,6 +914,7 @@ async function main() {
     await testKitchenBattle();
     await testSnake();
     await testPong();
+    await testCamo();
     await testBots();
     await testSpectatorRescue();
     await testValidation();

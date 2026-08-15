@@ -5,6 +5,7 @@
 // 2. ここで require してリストに追加
 // 3. public/<id>/ にクライアントページを作成
 const breakout = require('./breakout');
+const camo = require('./camo');
 const edges = require('./edges');
 const kitchen = require('./kitchen');
 const kitchenbattle = require('./kitchenbattle');
@@ -13,7 +14,7 @@ const snake = require('./snake');
 const pong = require('./pong');
 
 const GAMES = {};
-for (const mod of [breakout, edges, kitchen, kitchenbattle, polygon, snake, pong]) {
+for (const mod of [breakout, camo, edges, kitchen, kitchenbattle, polygon, snake, pong]) {
   GAMES[mod.meta.id] = mod;
 }
 
