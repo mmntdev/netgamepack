@@ -77,8 +77,9 @@ function setEq(a, b) {
 }
 
 class KitchenGame {
-  constructor(players) {
+  constructor(players, settings = {}) {
     this.t = 0;
+    this.matchSeconds = [120, 180, 300].includes(settings.time) ? settings.time : MATCH_SECONDS;
     this.finished = false;
     this.result = null;
     this.players = new Map();
@@ -409,7 +410,7 @@ class KitchenGame {
     if (this.finished) return;
     this.t += dt;
 
-    if (this.t >= this.startAt + MATCH_SECONDS) {
+    if (this.t >= this.startAt + this.matchSeconds) {
       this.finish();
       return;
     }
@@ -467,7 +468,7 @@ class KitchenGame {
       layout: LAYOUT,
       countdown: this.t < this.startAt ? round1(this.startAt - this.t) : 0,
       timeLeft: round1(
-        Math.max(0, this.startAt + MATCH_SECONDS - Math.max(this.t, this.startAt))
+        Math.max(0, this.startAt + this.matchSeconds - Math.max(this.t, this.startAt))
       ),
       teamScore: this.teamScore,
       players: [...this.players.values()].map((p) => ({
@@ -512,8 +513,23 @@ class KitchenGame {
 
 const makeKitchenBot = require('./lib/kitchenBot');
 
+const settingsDef = [
+  {
+    key: 'time',
+    label: '制限時間',
+    type: 'select',
+    options: [
+      { value: 120, label: '2分' },
+      { value: 180, label: '3分' },
+      { value: 300, label: '5分' },
+    ],
+    default: 180,
+  },
+];
+
 module.exports = {
   botAct: makeKitchenBot(LAYOUT, T),
+  settingsDef,
   meta: {
     id: 'kitchen',
     name: 'クレイジーキッチン',

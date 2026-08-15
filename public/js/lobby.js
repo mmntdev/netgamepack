@@ -120,6 +120,10 @@
           if (p.isBot) tags.push('🤖 CPU');
           if (p.id === lobby.hostId) tags.push('ホスト');
           if (p.role === 'spectator') tags.push('観戦');
+          if (lobby.prefDef && p.pref && p.pref !== lobby.prefDef.default) {
+            const opt = lobby.prefDef.options.find((o) => o.value === p.pref);
+            if (opt) tags.push(opt.label + '希望');
+          }
           tag.textContent = tags.join(' / ');
           li.appendChild(dot);
           li.appendChild(name);
@@ -137,7 +141,9 @@
         btnStart.disabled = playerCount < lobby.minPlayers;
       }
 
-      // CPU追加/削除ボタン(ホストのみ・待機中のみ)
+      // 希望ロール・ルーム設定・CPUボタン
+      renderPrefControls();
+      renderSettingsControls();
       ensureBotControls();
       const botControls = $('bot-controls');
       if (botControls) {
@@ -157,6 +163,136 @@
         } else {
           hint.textContent = 'ホストがゲームを開始するのを待っています…';
         }
+      }
+    }
+
+    // ---- 希望ロール選択(ゲームが prefDef を宣言している場合のみ) ----
+    function renderPrefControls() {
+      const lobby = state.lobby;
+      const def = lobby && lobby.prefDef;
+      let box = $('pref-controls');
+      if (!def || !$('btn-start')) {
+        if (box) box.classList.add('hidden');
+        return;
+      }
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'pref-controls';
+        box.style.display = 'flex';
+        box.style.flexDirection = 'column';
+        box.style.gap = '6px';
+        const label = document.createElement('span');
+        label.className = 'field-label';
+        label.textContent = def.label;
+        box.appendChild(label);
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        for (const opt of def.options) {
+          const b = document.createElement('button');
+          b.className = 'btn secondary';
+          b.style.flex = '1';
+          b.style.padding = '10px 6px';
+          b.dataset.prefValue = String(opt.value);
+          b.textContent = opt.label;
+          b.addEventListener('click', () => {
+            socket.emit('room:pref', { value: opt.value }, (res) => {
+              if (res && !res.ok) toast(res.error || '変更できませんでした');
+            });
+          });
+          row.appendChild(b);
+        }
+        box.appendChild(row);
+        const btnStart = $('btn-start');
+        btnStart.parentNode.insertBefore(box, btnStart);
+      }
+      box.classList.toggle('hidden', lobby.status !== 'waiting');
+      const meP = lobby.players.find((p) => p.id === state.you);
+      const current = (meP && meP.pref) || def.default;
+      for (const b of box.querySelectorAll('button[data-pref-value]')) {
+        b.style.outline =
+          b.dataset.prefValue === String(current) ? '2px solid var(--accent)' : 'none';
+      }
+    }
+
+    // ---- ルーム設定(ゲームが settingsDef を宣言している場合のみ・ホストが変更) ----
+    const settingCtrls = new Map();
+
+    function renderSettingsControls() {
+      const lobby = state.lobby;
+      const defs = (lobby && lobby.settingsDef) || [];
+      let box = $('room-settings');
+      if (defs.length === 0 || !$('btn-start')) {
+        if (box) box.classList.add('hidden');
+        return;
+      }
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'room-settings';
+        box.style.display = 'flex';
+        box.style.flexDirection = 'column';
+        box.style.gap = '8px';
+        const title = document.createElement('span');
+        title.className = 'field-label';
+        title.textContent = '⚙️ ルーム設定';
+        box.appendChild(title);
+        for (const def of defs) {
+          const row = document.createElement('div');
+          row.style.display = 'flex';
+          row.style.alignItems = 'center';
+          row.style.justifyContent = 'space-between';
+          row.style.gap = '10px';
+          const label = document.createElement('span');
+          label.textContent = def.label;
+          label.style.fontSize = '0.92rem';
+          row.appendChild(label);
+
+          let ctrl;
+          if (def.type === 'select') {
+            ctrl = document.createElement('select');
+            ctrl.className = 'input';
+            ctrl.style.width = 'auto';
+            ctrl.style.padding = '8px 10px';
+            for (const opt of def.options) {
+              const o = document.createElement('option');
+              o.value = String(opt.value);
+              o.textContent = opt.label;
+              ctrl.appendChild(o);
+            }
+            ctrl.addEventListener('change', () => {
+              const opt = def.options.find((o) => String(o.value) === ctrl.value);
+              if (!opt) return;
+              socket.emit('room:setting', { key: def.key, value: opt.value }, (res) => {
+                if (res && !res.ok) toast(res.error || '変更できませんでした');
+              });
+            });
+          } else {
+            ctrl = document.createElement('input');
+            ctrl.type = 'number';
+            ctrl.className = 'input';
+            ctrl.style.width = '90px';
+            ctrl.min = def.min;
+            ctrl.max = def.max;
+            ctrl.step = def.step || 1;
+            ctrl.addEventListener('change', () => {
+              socket.emit('room:setting', { key: def.key, value: Number(ctrl.value) }, (res) => {
+                if (res && !res.ok) toast(res.error || '変更できませんでした');
+              });
+            });
+          }
+          row.appendChild(ctrl);
+          box.appendChild(row);
+          settingCtrls.set(def.key, ctrl);
+        }
+        const btnStart = $('btn-start');
+        btnStart.parentNode.insertBefore(box, btnStart);
+      }
+      box.classList.remove('hidden');
+      for (const def of defs) {
+        const ctrl = settingCtrls.get(def.key);
+        if (!ctrl) continue;
+        if (document.activeElement !== ctrl) ctrl.value = String(lobby.settings[def.key]);
+        ctrl.disabled = !isHost() || lobby.status !== 'waiting';
       }
     }
 

@@ -23,7 +23,7 @@ class Room {
   constructor(id, gameMod) {
     this.id = id;
     this.gameMod = gameMod;
-    this.clients = new Map(); // socketId -> { id, name, role: 'player'|'spectator', isBot? }
+    this.clients = new Map(); // socketId -> { id, name, role, isBot?, pref? }
     this.hostId = null;
     this.status = 'waiting'; // 'waiting' | 'playing'
     this.game = null;
@@ -31,6 +31,11 @@ class Room {
     this.tickCount = 0;
     this.lastResult = null;
     this.botSeq = 0;
+    // ゲームが宣言した設定スキーマの既定値で初期化
+    this.settings = {};
+    for (const def of gameMod.settingsDef || []) {
+      this.settings[def.key] = def.default;
+    }
   }
 
   get players() {
@@ -57,11 +62,15 @@ class Room {
       status: this.status,
       hostId: this.hostId,
       lastResult: this.lastResult,
+      settings: this.settings,
+      settingsDef: this.gameMod.settingsDef || [],
+      prefDef: this.gameMod.prefDef || null,
       players: [...this.clients.values()].map((c) => ({
         id: c.id,
         name: c.name,
         role: c.role,
         isBot: !!c.isBot,
+        pref: c.pref || null,
       })),
     };
   }
@@ -113,6 +122,12 @@ class RoomManager {
     });
     socket.on('room:removeBot', (payload, ack) => {
       this.safeAck(ack, () => this.removeBot(socket));
+    });
+    socket.on('room:setting', (payload, ack) => {
+      this.safeAck(ack, () => this.setSetting(socket, payload));
+    });
+    socket.on('room:pref', (payload, ack) => {
+      this.safeAck(ack, () => this.setPref(socket, payload));
     });
     // ack のないハンドラも try/catch で守り、ゲームモジュールの例外でプロセスが落ちないようにする
     socket.on('game:input', (payload) => {
@@ -218,6 +233,47 @@ class RoomManager {
     return { ok: true, roomId: room.id, you: socket.id, role, lobby: room.lobbyState() };
   }
 
+  setSetting(socket, payload) {
+    const room = this.roomOf(socket);
+    if (!room) return { ok: false, error: 'ルームに参加していません' };
+    if (room.hostId !== socket.id) return { ok: false, error: '設定を変更できるのはホストだけです' };
+    if (room.status !== 'waiting') return { ok: false, error: 'ゲーム中は設定を変更できません' };
+    const def = (room.gameMod.settingsDef || []).find(
+      (d) => d.key === (payload && payload.key)
+    );
+    if (!def) return { ok: false, error: '不明な設定です' };
+    let v = payload.value;
+    if (def.type === 'number') {
+      v = Number(v);
+      if (!Number.isFinite(v)) return { ok: false, error: '数値を指定してください' };
+      const step = def.step || 1;
+      v = Math.round(v / step) * step;
+      v = Math.max(def.min, Math.min(def.max, v));
+    } else {
+      if (!def.options.some((o) => o.value === v)) {
+        return { ok: false, error: '不正な値です' };
+      }
+    }
+    room.settings[def.key] = v;
+    this.broadcastRoom(room);
+    return { ok: true };
+  }
+
+  setPref(socket, payload) {
+    const room = this.roomOf(socket);
+    if (!room) return { ok: false, error: 'ルームに参加していません' };
+    const def = room.gameMod.prefDef;
+    if (!def) return { ok: false, error: 'このゲームに希望設定はありません' };
+    if (room.status !== 'waiting') return { ok: false, error: 'ゲーム中は変更できません' };
+    const v = payload && payload.value;
+    if (!def.options.some((o) => o.value === v)) return { ok: false, error: '不正な値です' };
+    const client = room.clients.get(socket.id);
+    if (!client) return { ok: false, error: 'ルームに参加していません' };
+    client.pref = v;
+    this.broadcastRoom(room);
+    return { ok: true };
+  }
+
   addBot(socket) {
     const room = this.roomOf(socket);
     if (!room) return { ok: false, error: 'ルームに参加していません' };
@@ -316,7 +372,10 @@ class RoomManager {
       return { ok: false, error: `開始には${meta.minPlayers}人以上のプレイヤーが必要です` };
     }
 
-    room.game = new room.gameMod.Game(players.map((p) => ({ id: p.id, name: p.name })));
+    room.game = new room.gameMod.Game(
+      players.map((p) => ({ id: p.id, name: p.name, pref: p.pref || null })),
+      { ...room.settings }
+    );
     room.status = 'playing';
     room.lastResult = null;
     room.tickCount = 0;

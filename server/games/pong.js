@@ -23,8 +23,11 @@ function round1(v) {
 }
 
 class PongGame {
-  constructor(players) {
+  constructor(players, settings = {}) {
     this.t = 0;
+    this.winScore = Number.isFinite(Number(settings.win))
+      ? Math.max(3, Math.min(15, Math.round(Number(settings.win))))
+      : WIN_SCORE;
     this.finished = false;
     this.result = null;
     this.players = new Map();
@@ -98,7 +101,7 @@ class PongGame {
     const p = id != null ? this.players.get(id) : null;
     if (p) p.score++;
     this.ball = null;
-    if (p && p.score >= WIN_SCORE) {
+    if (p && p.score >= this.winScore) {
       this.finished = true;
       this.result = {
         title: `${p.name} の勝ち!`,
@@ -216,7 +219,7 @@ class PongGame {
       serveIn: this.serveAt != null ? round1(Math.max(0, this.serveAt - this.t)) : 0,
       paddles,
       ball: this.ball ? { x: round1(this.ball.x), y: round1(this.ball.y), r: BALL_R } : null,
-      winScore: WIN_SCORE,
+      winScore: this.winScore,
     };
   }
 }
@@ -238,8 +241,13 @@ function botAct(game, id) {
   game.handleInput(id, { y: target });
 }
 
+const settingsDef = [
+  { key: 'win', label: '勝利点数', type: 'number', min: 3, max: 15, step: 1, default: 7 },
+];
+
 module.exports = {
   botAct,
+  settingsDef,
   meta: {
     id: 'pong',
     name: '対戦 PONG',

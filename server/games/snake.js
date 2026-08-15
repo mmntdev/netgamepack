@@ -34,8 +34,9 @@ function key(x, y) {
 }
 
 class SnakeGame {
-  constructor(players) {
+  constructor(players, settings = {}) {
     this.t = 0;
+    this.matchSeconds = [60, 120, 180].includes(settings.time) ? settings.time : MATCH_SECONDS;
     this.finished = false;
     this.result = null;
     this.players = new Map();
@@ -168,7 +169,7 @@ class SnakeGame {
   }
 
   stepInterval() {
-    const progress = Math.min(1, Math.max(0, (this.t - this.startAt) / MATCH_SECONDS));
+    const progress = Math.min(1, Math.max(0, (this.t - this.startAt) / this.matchSeconds));
     return STEP_START + (STEP_END - STEP_START) * progress;
   }
 
@@ -292,7 +293,7 @@ class SnakeGame {
     if (this.t < this.startAt) return;
 
     // タイムアップ
-    if (this.t >= this.startAt + MATCH_SECONDS) {
+    if (this.t >= this.startAt + this.matchSeconds) {
       this.finish();
       return;
     }
@@ -317,7 +318,7 @@ class SnakeGame {
       countdown: this.t < this.startAt ? Math.round((this.startAt - this.t) * 10) / 10 : 0,
       timeLeft: Math.max(
         0,
-        Math.round((this.startAt + MATCH_SECONDS - Math.max(this.t, this.startAt)) * 10) / 10
+        Math.round((this.startAt + this.matchSeconds - Math.max(this.t, this.startAt)) * 10) / 10
       ),
       players: [...this.players.values()].map((p) => {
         const flat = [];
@@ -380,8 +381,23 @@ function botAct(game, id) {
   if (cand[0].d !== lastQueued) game.handleInput(id, { d: cand[0].d });
 }
 
+const settingsDef = [
+  {
+    key: 'time',
+    label: '制限時間',
+    type: 'select',
+    options: [
+      { value: 60, label: '1分' },
+      { value: 120, label: '2分' },
+      { value: 180, label: '3分' },
+    ],
+    default: 120,
+  },
+];
+
 module.exports = {
   botAct,
+  settingsDef,
   meta: {
     id: 'snake',
     name: 'マルチスネーク',

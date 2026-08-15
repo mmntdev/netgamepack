@@ -740,30 +740,154 @@ async function testCamo() {
     '2人で鬼1・カメレオン1に分かれる'
   );
 
-  // カメレオン側のソケットを特定して、隠れフェーズでスタンプ&手描き
+  // 隠れフェーズ: 絵の具アイテムが見え、拾っていない色では塗れない
   const hiderId = snap0.players.find((p) => p.role === 'hider').id;
   const hiderSock = hiderId === p1.id ? p1 : p2;
   await sleep(3500); // 隠れフェーズへ
-  hiderSock.emit('game:input', { st: 1 });
-  hiderSock.emit('game:input', { p: [[0, 5]] });
-  const stamped = await new Promise((resolve) => {
-    const handler = (snap) => {
-      const h = snap.players.find((p) => p.id === hiderId);
-      if (h && h.body && h.body[0] === 5 && h.body.some((c) => c !== 0 && c !== 5)) {
-        hiderSock.off('game:state', handler);
-        resolve(true);
-      }
-    };
-    hiderSock.on('game:state', handler);
-    setTimeout(() => {
-      hiderSock.off('game:state', handler);
-      resolve(false);
-    }, 5000);
-  });
-  check(stamped, 'スタンプ擬態と手描きペイントが通信経由で反映される');
+  const hideSnap = await waitFor(hiderSock, 'game:state');
+  check(hideSnap.phase === 'hide' && hideSnap.items.length > 0, '絵の具アイテムが配置されている');
+  hiderSock.emit('game:input', { p: [[0, 5]] }); // 未所持の色
+  await sleep(1200);
+  const afterSnap = await waitFor(hiderSock, 'game:state');
+  const h = afterSnap.players.find((p) => p.id === hiderId);
+  check(h.body[0] === 0, '拾っていない色では塗れない(通信経由)');
+  check(Array.isArray(h.colors) && h.colors.includes(0), '所持色リストが届く');
 
   p1.disconnect();
   p2.disconnect();
+  await sleep(300);
+}
+
+function testCamoLogic() {
+  console.log('ぬりかくれカメレオン(絵の具ロジック):');
+  const mod = require('../server/games/camo.js');
+  const dt = 1 / 60;
+  const g = new mod.Game(
+    [
+      { id: 'a', name: 'A', pref: 'hunter' },
+      { id: 'b', name: 'B', pref: 'hider' },
+      { id: 'c', name: 'C', pref: null },
+    ],
+    { hide: 20 }
+  );
+  check(
+    g.players.get('a').role === 'hunter' && g.players.get('b').role === 'hider',
+    '希望ロールが尊重される'
+  );
+  check(g.items.length === 33, `絵の具アイテムが配置される(${g.items.length}個)`);
+
+  for (let i = 0; i < 60 * 4; i++) g.tick(dt); // 隠れフェーズへ
+  const hider = [...g.players.values()].find((p) => p.role === 'hider');
+  const item = g.items[0];
+  hider.x = item.x;
+  hider.y = item.y;
+  g.tick(dt);
+  check(hider.colors.has(item.c), 'アイテムに触れると色を獲得する');
+  g.handleInput(hider.id, { p: [[0, item.c]] });
+  check(hider.body[0] === item.c, '拾った色で塗れる');
+  const unowned = [];
+  for (let c = 1; c < 12; c++) if (!hider.colors.has(c)) unowned.push(c);
+  g.handleInput(hider.id, { p: [[1, unowned[0]]] });
+  check(hider.body[1] === 0, '拾っていない色では塗れない');
+  g.handleInput(hider.id, { st: 1 });
+  check(hider.body.every((c, i) => (i === 0 ? c === item.c : c === 0)), 'スタンプ機能は廃止済み');
+
+  while (g.phase() !== 'seek') g.tick(dt);
+  g.tick(dt);
+  check(g.items.length === 0, '捜索フェーズで絵の具が消える');
+
+  // CPUだけで完走(絵の具収集→塗り→勝敗まで)
+  const g2 = new mod.Game(
+    ['a', 'b', 'c', 'd'].map((id, i) => ({ id, name: 'CPU' + (i + 1), pref: null })),
+    { hide: 20, seek: 60 }
+  );
+  let ticks = 0;
+  while (!g2.finished && ticks < 60 * 100) {
+    g2.tick(dt);
+    ticks++;
+    if (ticks % 6 === 0) for (const id of g2.players.keys()) mod.botAct(g2, id);
+  }
+  check(g2.finished, `CPUだけで完走する(${g2.result && g2.result.title})`);
+  const painted = [...g2.players.values()].some(
+    (p) => p.role === 'hider' && p.body.some((c) => c !== 0)
+  );
+  check(painted, 'CPUカメレオンが絵の具を集めて体を塗る');
+}
+
+async function testSettings() {
+  console.log('ルーム設定と希望ロール:');
+  // ブロック崩し: ライフ変更・権限・クランプ
+  const host = await connect();
+  const guest = await connect();
+  const created = await emitAck(host, 'room:create', { gameId: 'breakout', name: 'ホスト' });
+  await emitAck(guest, 'room:join', { roomId: created.roomId, name: 'ゲスト' });
+  check(
+    created.lobby.settings && created.lobby.settings.lives === 3 &&
+      created.lobby.settingsDef.length >= 1,
+    '設定が既定値つきでロビーに載る'
+  );
+  const notHost = await emitAck(guest, 'room:setting', { key: 'lives', value: 5 });
+  check(notHost.ok === false, 'ホスト以外は設定を変更できない');
+  const set1 = await emitAck(host, 'room:setting', { key: 'lives', value: 5 });
+  check(set1.ok === true, 'ホストは設定を変更できる');
+  const badKey = await emitAck(host, 'room:setting', { key: 'nope', value: 1 });
+  check(badKey.ok === false, '不明な設定キーはエラー');
+  await emitAck(host, 'room:setting', { key: 'lives', value: 99 });
+  const clampedLobby = await emitAck(host, 'room:setting', { key: 'lives', value: 5 });
+  check(clampedLobby.ok === true, '範囲外の値はエラーにならずクランプされる');
+  await emitAck(host, 'room:start', {});
+  const snap = await waitFor(host, 'game:state');
+  check(snap.lives === 5, `設定したライフでゲームが始まる(lives=${snap.lives})`);
+  host.disconnect();
+  guest.disconnect();
+  await sleep(300);
+
+  // PONG: 勝利点数
+  const p1 = await connect();
+  const p2 = await connect();
+  const r2 = await emitAck(p1, 'room:create', { gameId: 'pong', name: 'A' });
+  await emitAck(p2, 'room:join', { roomId: r2.roomId, name: 'B' });
+  await emitAck(p1, 'room:setting', { key: 'win', value: 3 });
+  await emitAck(p1, 'room:start', {});
+  const ps = await waitFor(p1, 'game:state');
+  check(ps.winScore === 3, 'PONGの勝利点数を変更できる');
+  p1.disconnect();
+  p2.disconnect();
+  await sleep(300);
+
+  // カメレオン: 希望ロール + 隠れ時間設定
+  const c1 = await connect();
+  const c2 = await connect();
+  const r3 = await emitAck(c1, 'room:create', { gameId: 'camo', name: 'かくれたい' });
+  await emitAck(c2, 'room:join', { roomId: r3.roomId, name: 'おにやりたい' });
+  const pref1 = await emitAck(c1, 'room:pref', { value: 'hider' });
+  check(pref1.ok === true, '希望ロールを設定できる');
+  await emitAck(c2, 'room:pref', { value: 'hunter' });
+  await emitAck(c1, 'room:setting', { key: 'hide', value: 20 });
+  await emitAck(c1, 'room:start', {});
+  const cs = await waitFor(c1, 'game:state');
+  const role1 = cs.players.find((p) => p.id === c1.id).role;
+  const role2 = cs.players.find((p) => p.id === c2.id).role;
+  check(role1 === 'hider' && role2 === 'hunter', `希望どおりの役割になる(${role1}/${role2})`);
+  const hideSnap = await new Promise((resolve) => {
+    const handler = (s) => {
+      if (s.phase === 'hide') {
+        c1.off('game:state', handler);
+        resolve(s);
+      }
+    };
+    c1.on('game:state', handler);
+    setTimeout(() => {
+      c1.off('game:state', handler);
+      resolve(null);
+    }, 6000);
+  });
+  check(
+    hideSnap && hideSnap.phaseLeft <= 20.5,
+    `隠れ時間の設定が反映される(${hideSnap && hideSnap.phaseLeft}秒)`
+  );
+  c1.disconnect();
+  c2.disconnect();
   await sleep(300);
 }
 
@@ -915,7 +1039,9 @@ async function main() {
     await testKitchenBattle();
     await testSnake();
     await testPong();
+    testCamoLogic();
     await testCamo();
+    await testSettings();
     await testBots();
     await testSpectatorRescue();
     await testValidation();

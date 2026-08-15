@@ -41,6 +41,8 @@ const PALETTE = [
   '#365314', // 11 オリーブ
 ];
 const BASE_COLOR_IDX = 11; // 地面のベース色
+const ITEMS_PER_COLOR = 3; // 各色の絵の具アイテム数
+const ITEM_PICK_RADIUS = 28;
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -51,7 +53,7 @@ function round1(v) {
 }
 
 class CamoGame {
-  constructor(players) {
+  constructor(players, settings = {}) {
     this.t = 0;
     this.finished = false;
     this.result = null;
@@ -60,6 +62,9 @@ class CamoGame {
     this.startAt = COUNTDOWN;
     this.shots = []; // {x, y, hit, at}
     this.endReason = null;
+    this.hideTime = [20, 40, 60].includes(settings.hide) ? settings.hide : HIDE_TIME;
+    this.seekTime = [60, 90, 120].includes(settings.seek) ? settings.seek : SEEK_TIME;
+    this.hunterSetting = [1, 2, 3].includes(settings.hunters) ? settings.hunters : 'auto';
 
     // ステージ生成(円と矩形のカラフルなパッチワーク)
     this.shapes = [];
@@ -88,16 +93,43 @@ class CamoGame {
       }
     }
 
-    // 役割分担: 人数の約1/3がハンター(最低1人)
+    // 絵の具アイテム: 各色を数個ずつマップに散らばせる。
+    // 隠れ場所に合う色を拾えるかどうかが擬態の成否を分ける
+    this.items = [];
+    for (let c = 1; c < PALETTE.length; c++) {
+      for (let k = 0; k < ITEMS_PER_COLOR; k++) {
+        this.items.push({
+          x: Math.round(40 + this.rng() * (W - 80)),
+          y: Math.round(40 + this.rng() * (H - 80)),
+          c,
+        });
+      }
+    }
+
+    // 役割分担: 希望(pref)を優先し、残りはランダム。鬼の人数は設定(既定は人数の1/3・最低1)
     const list = [...players];
     for (let i = list.length - 1; i > 0; i--) {
       const j = Math.floor(this.rng() * (i + 1));
       [list[i], list[j]] = [list[j], list[i]];
     }
-    const hunterCount = Math.max(1, Math.floor(list.length / 3));
+    let hunterCount =
+      this.hunterSetting === 'auto'
+        ? Math.max(1, Math.floor(list.length / 3))
+        : this.hunterSetting;
+    hunterCount = Math.max(1, Math.min(hunterCount, list.length - 1)); // 隠れ役を最低1人残す
+
+    const wantHunter = list.filter((p) => p.pref === 'hunter');
+    const wantHider = list.filter((p) => p.pref === 'hider');
+    const noPref = list.filter((p) => p.pref !== 'hunter' && p.pref !== 'hider');
+    const hunters = [];
+    for (const pool of [wantHunter, noPref, wantHider]) {
+      while (hunters.length < hunterCount && pool.length > 0) {
+        hunters.push(pool.shift());
+      }
+    }
+    const hunterIds = new Set(hunters.map((p) => p.id));
     list.forEach((p, i) => {
-      const role = i < hunterCount ? 'hunter' : 'hider';
-      this.addPlayerWithRole(p, role, i);
+      this.addPlayerWithRole(p, hunterIds.has(p.id) ? 'hunter' : 'hider', i);
     });
   }
 
@@ -120,6 +152,7 @@ class CamoGame {
       cdUntil: 0,
       surviveAcc: 0,
       body: new Array(BODY_W * BODY_H).fill(0), // 全マス白からスタート
+      colors: new Set([0]), // 持っている絵の具(白は最初から)
     };
     this.players.set(id, p);
   }
@@ -145,14 +178,14 @@ class CamoGame {
 
   phase() {
     if (this.t < this.startAt) return 'countdown';
-    if (this.t < this.startAt + HIDE_TIME) return 'hide';
+    if (this.t < this.startAt + this.hideTime) return 'hide';
     return 'seek';
   }
 
   phaseLeft() {
     if (this.t < this.startAt) return this.startAt - this.t;
-    if (this.t < this.startAt + HIDE_TIME) return this.startAt + HIDE_TIME - this.t;
-    return Math.max(0, this.startAt + HIDE_TIME + SEEK_TIME - this.t);
+    if (this.t < this.startAt + this.hideTime) return this.startAt + this.hideTime - this.t;
+    return Math.max(0, this.startAt + this.hideTime + this.seekTime - this.t);
   }
 
   aliveHiders() {
@@ -172,20 +205,6 @@ class CamoGame {
       }
     }
     return BASE_COLOR_IDX;
-  }
-
-  /** 現在地の背景を体にコピー(スタンプ擬態) */
-  stampBody(p) {
-    const left = p.x - BODY_PX_W / 2;
-    const top = p.y - BODY_PX_H / 2;
-    for (let cy = 0; cy < BODY_H; cy++) {
-      for (let cx = 0; cx < BODY_W; cx++) {
-        p.body[cy * BODY_W + cx] = this.colorAt(
-          left + cx * CELL + CELL / 2,
-          top + cy * CELL + CELL / 2
-        );
-      }
-    }
   }
 
   handleInput(id, data) {
@@ -208,13 +227,7 @@ class CamoGame {
       return;
     }
 
-    // スタンプ擬態(隠れフェーズのカメレオンのみ)
-    if (data.st && p.role === 'hider' && p.alive && phase === 'hide') {
-      this.stampBody(p);
-      return;
-    }
-
-    // 手描きペイント(隠れフェーズのカメレオンのみ)
+    // 手描きペイント(隠れフェーズのカメレオンのみ。拾った絵の具の色しか使えない)
     if (Array.isArray(data.p) && p.role === 'hider' && p.alive && phase === 'hide') {
       for (const entry of data.p.slice(0, 64)) {
         if (!Array.isArray(entry)) continue;
@@ -226,7 +239,8 @@ class CamoGame {
           idx >= 0 &&
           idx < BODY_W * BODY_H &&
           col >= 0 &&
-          col < PALETTE.length
+          col < PALETTE.length &&
+          p.colors.has(col)
         ) {
           p.body[idx] = col;
         }
@@ -303,6 +317,22 @@ class CamoGame {
       }
     }
 
+    // 絵の具アイテムの取得(隠れフェーズ中、カメレオンが触れると獲得)
+    if (phase === 'hide' && this.items.length > 0) {
+      for (const p of this.players.values()) {
+        if (p.role !== 'hider' || !p.alive) continue;
+        for (let i = this.items.length - 1; i >= 0; i--) {
+          const it = this.items[i];
+          if (Math.hypot(it.x - p.x, it.y - p.y) <= ITEM_PICK_RADIUS) {
+            p.colors.add(it.c);
+            this.items.splice(i, 1);
+          }
+        }
+      }
+    }
+    // 捜索フェーズに入ったら残った絵の具は消える
+    if (phase === 'seek' && this.items.length > 0) this.items = [];
+
     // 生存スコア(捜索フェーズ中、1秒ごと)
     if (phase === 'seek') {
       for (const p of this.aliveHiders()) {
@@ -313,7 +343,7 @@ class CamoGame {
         }
       }
       // 時間切れ → 生き残りボーナスとカメレオン勝利
-      if (this.t >= this.startAt + HIDE_TIME + SEEK_TIME) {
+      if (this.t >= this.startAt + this.hideTime + this.seekTime) {
         const survivors = this.aliveHiders();
         for (const p of survivors) p.score += SURVIVE_BONUS;
         this.finish(
@@ -343,6 +373,7 @@ class CamoGame {
       phaseLeft: round1(this.phaseLeft()),
       countdown: phase === 'countdown' ? round1(this.startAt - this.t) : 0,
       aliveHiders: this.aliveHiders().length,
+      items: phase === 'seek' ? [] : this.items,
       shots: this.shots.map((s) => ({ x: s.x, y: s.y, hit: s.hit, age: round1(this.t - s.at) })),
       players: [...this.players.values()].map((p) => ({
         id: p.id,
@@ -355,6 +386,7 @@ class CamoGame {
         y: round1(p.y),
         cd: p.role === 'hunter' ? round1(Math.max(0, p.cdUntil - this.t)) : 0,
         body: p.role === 'hider' ? p.body : undefined,
+        colors: p.role === 'hider' ? [...p.colors] : undefined,
       })),
     };
   }
@@ -370,25 +402,39 @@ function botAct(game, id) {
   if (p.role === 'hider') {
     if (phase === 'hide') {
       const hideElapsed = game.t - game.startAt;
-      if (hideElapsed < HIDE_TIME * 0.5) {
-        // 前半はうろついて隠れ場所を探す
-        if (
-          st.tx == null ||
-          Math.hypot(st.tx - p.x, st.ty - p.y) < 20
-        ) {
-          st.tx = 60 + game.rng() * (W - 120);
-          st.ty = 60 + game.rng() * (H - 120);
+      if (hideElapsed < game.hideTime * 0.55) {
+        // 前半は絵の具アイテムを集めて回る
+        let best = null;
+        let bd = Infinity;
+        for (const it of game.items) {
+          const d = Math.hypot(it.x - p.x, it.y - p.y);
+          if (d < bd) {
+            bd = d;
+            best = it;
+          }
         }
-        const dx = st.tx - p.x;
-        const dy = st.ty - p.y;
+        const tx = best ? best.x : 60 + game.rng() * (W - 120);
+        const ty = best ? best.y : 60 + game.rng() * (H - 120);
+        const dx = tx - p.x;
+        const dy = ty - p.y;
         const m = Math.hypot(dx, dy) || 1;
         game.handleInput(id, { x: dx / m, y: dy / m });
       } else {
-        // 後半は止まってスタンプ擬態(数回やり直す)
+        // 後半は止まって、持っている色で体を塗る
         game.handleInput(id, { x: 0, y: 0 });
-        if (game.t >= st.stamped + 3) {
-          st.stamped = game.t;
-          game.handleInput(id, { st: 1 });
+        if (st.paintIdx == null) {
+          const bg = game.colorAt(p.x, p.y);
+          const owned = [...p.colors].filter((c) => c !== 0);
+          st.fillColor = p.colors.has(bg) ? bg : owned.length > 0 ? owned[0] : 0;
+          st.paintIdx = 0;
+        }
+        if (st.paintIdx < p.body.length) {
+          const batch = [];
+          for (let i = st.paintIdx; i < Math.min(st.paintIdx + 64, p.body.length); i++) {
+            batch.push([i, st.fillColor]);
+          }
+          game.handleInput(id, { p: batch });
+          st.paintIdx += 64;
         }
       }
     } else {
@@ -424,13 +470,63 @@ function botAct(game, id) {
   }
 }
 
+const settingsDef = [
+  {
+    key: 'hunters',
+    label: '鬼の人数',
+    type: 'select',
+    options: [
+      { value: 'auto', label: 'おまかせ(1/3)' },
+      { value: 1, label: '1人' },
+      { value: 2, label: '2人' },
+      { value: 3, label: '3人' },
+    ],
+    default: 'auto',
+  },
+  {
+    key: 'hide',
+    label: '隠れ時間',
+    type: 'select',
+    options: [
+      { value: 20, label: '20秒' },
+      { value: 40, label: '40秒' },
+      { value: 60, label: '60秒' },
+    ],
+    default: 40,
+  },
+  {
+    key: 'seek',
+    label: '捜索時間',
+    type: 'select',
+    options: [
+      { value: 60, label: '60秒' },
+      { value: 90, label: '90秒' },
+      { value: 120, label: '120秒' },
+    ],
+    default: 90,
+  },
+];
+
+const prefDef = {
+  key: 'role',
+  label: '希望する役割',
+  options: [
+    { value: 'random', label: '🎲 おまかせ' },
+    { value: 'hider', label: '🦎 カメレオン' },
+    { value: 'hunter', label: '🔫 鬼' },
+  ],
+  default: 'random',
+};
+
 module.exports = {
   botAct,
+  settingsDef,
+  prefDef,
   meta: {
     id: 'camo',
     name: 'ぬりかくれカメレオン',
     description:
-      'めっちゃカメレオン風の2Dお絵描きかくれんぼ!カメレオンチームは真っ白な体に背景をスタンプ&手描きして擬態し、ハンター(鬼)は捜索フェーズで怪しい場所を撃って見つけ出す。生き残れればカメレオンの勝ち。人数の1/3が自動で鬼になる(2〜6人)',
+      'めっちゃカメレオン風の2Dお絵描きかくれんぼ!カメレオンはマップに落ちている絵の具を拾い、その色だけで真っ白な体を塗って擬態する。隠れ場所に合う色を集められるかが勝負。鬼は捜索フェーズで怪しい場所を撃って見つけ出す。生き残ればカメレオンの勝ち(2〜6人・役割は希望制+ルーム設定あり)',
     minPlayers: 2,
     maxPlayers: 6,
     allowJoinInProgress: false,

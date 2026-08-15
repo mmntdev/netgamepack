@@ -136,10 +136,15 @@ class PolyGeom {
   }
 }
 
+const SPEED_MULS = { slow: 0.8, normal: 1, fast: 1.25 };
+
 class PolygonGame {
-  constructor(players) {
+  constructor(players, settings = {}) {
     this.t = 0;
-    this.lives = START_LIVES;
+    this.speedMul = SPEED_MULS[settings.speed] || 1;
+    this.lives = Number.isFinite(Number(settings.lives))
+      ? Math.max(1, Math.min(9, Math.round(Number(settings.lives))))
+      : START_LIVES;
     this.level = 1;
     this.finished = false;
     this.result = null;
@@ -202,7 +207,7 @@ class PolygonGame {
   }
 
   ballSpeed() {
-    return Math.min(BALL_BASE_SPEED + (this.level - 1) * 35, BALL_MAX_SPEED);
+    return Math.min(BALL_BASE_SPEED + (this.level - 1) * 35, BALL_MAX_SPEED) * this.speedMul;
   }
 
   buildBricks() {
@@ -588,8 +593,24 @@ function botAct(game, id) {
   game.handleInput(id, { a: angle });
 }
 
+const settingsDef = [
+  { key: 'lives', label: 'ライフ', type: 'number', min: 1, max: 9, step: 1, default: 3 },
+  {
+    key: 'speed',
+    label: 'ボール速度',
+    type: 'select',
+    options: [
+      { value: 'slow', label: 'ゆっくり' },
+      { value: 'normal', label: 'ふつう' },
+      { value: 'fast', label: 'はやい' },
+    ],
+    default: 'normal',
+  },
+];
+
 module.exports = {
   botAct,
+  settingsDef,
   meta: {
     id: 'polygon',
     name: 'ポリゴン・ブロック崩し',

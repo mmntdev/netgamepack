@@ -31,6 +31,8 @@
     const me = curr.players.find((p) => p.id === client.you);
     const pm = prev.players.find((p) => p.id === client.you);
     if (me && pm && pm.alive && !me.alive) sfx('lost');
+    // 絵の具を拾った
+    if (me && pm && me.colors && pm.colors && me.colors.length > pm.colors.length) sfx('powerup');
   }
 
   const client = NetGame.createClient({
@@ -169,9 +171,8 @@
   const editor = document.getElementById('body-editor');
   const ectx = editor.getContext('2d');
   const paletteRow = document.getElementById('palette-row');
-  const btnStamp = document.getElementById('btn-stamp');
   const ECELL = 18; // エディタの1マスサイズ
-  let selectedColor = 1;
+  let selectedColor = 0; // 最初は白しか持っていない
   let paletteBuilt = false;
   const pendingPaint = new Map(); // idx -> color(送信待ち/反映待ちのローカル上書き)
   let paintQueue = [];
@@ -203,7 +204,26 @@
     const m = me(snap);
     const show = m && m.role === 'hider' && m.alive && snap.phase === 'hide';
     paintPanel.classList.toggle('hidden', !show);
-    if (show) buildPalette(snap.palette);
+    if (!show) return;
+    buildPalette(snap.palette);
+    // 拾った色だけ使える(未所持はロック表示)
+    const owned = new Set(m.colors || [0]);
+    for (const b of paletteRow.children) {
+      const idx = Number(b.dataset.idx);
+      const has = owned.has(idx);
+      b.disabled = !has;
+      b.style.opacity = has ? '1' : '0.22';
+      b.style.cursor = has ? 'pointer' : 'not-allowed';
+    }
+    if (!owned.has(selectedColor)) {
+      selectedColor = 0;
+      for (const b of paletteRow.children) {
+        b.style.border =
+          Number(b.dataset.idx) === selectedColor
+            ? '2px solid #e8ecff'
+            : '2px solid transparent';
+      }
+    }
   }
 
   function editorCell(e) {
@@ -243,16 +263,6 @@
     client.socket.emit('game:input', { p: batch });
   }, 150);
 
-  if (btnStamp) {
-    btnStamp.addEventListener('click', () => {
-      if (!client.playing || client.role !== 'player') return;
-      pendingPaint.clear();
-      paintQueue = [];
-      client.socket.emit('game:input', { st: 1 });
-      sfx('pick');
-      btnStamp.blur();
-    });
-  }
 
   function myBodyCell(m, idx) {
     if (pendingPaint.has(idx)) {
@@ -376,6 +386,14 @@
     ctx.strokeRect(x0 - 0.5, y0 - 0.5, MINI_W + 1, MINI_H + 1);
     const sx = MINI_W / snap.w;
     const sy = MINI_H / snap.h;
+    // 絵の具アイテム(隠れフェーズ中、色付きの点で場所が分かる)
+    for (const it of snap.items || []) {
+      ctx.fillStyle = snap.palette[it.c] || '#fff';
+      ctx.fillRect(x0 + it.x * sx - 1.5, y0 + it.y * sy - 1.5, 3, 3);
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(x0 + it.x * sx - 1.5, y0 + it.y * sy - 1.5, 3, 3);
+    }
     // 鬼の位置は常に表示(カメレオン側の緊張感のため)
     for (const p of snap.players) {
       if (p.role !== 'hunter') continue;
@@ -408,22 +426,16 @@
     const bw = snap.bodyW * cell;
     const bh = snap.bodyH * cell;
 
-    // 足元の影(体がどう塗られていても必ず出る実体の証拠)
-    if (p.alive) {
-      ctx.globalAlpha = alpha * 0.8;
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.17)';
-      ctx.beginPath();
-      ctx.ellipse(x, y + bh / 2 + 2, bw * 0.55, 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-
-    // 呼吸のゆらぎ(生きている間だけ。影は動かないので相対的なズレが見える)
+    // 呼吸のゆらぎ(生きている間だけ)— これが最大の手がかり。
+    // どう塗っても体全体が周期的に上下+わずかに左右へ揺れる
     let bob = 0;
+    let sway = 0;
     if (p.alive && now != null) {
-      bob = Math.sin(now / 700 + bodyPhase(p.id)) * 1.2;
+      const phase = bodyPhase(p.id);
+      bob = Math.sin(now / 650 + phase) * 3;
+      sway = Math.sin(now / 910 + phase * 1.7) * 1.5;
     }
-    const left = x - bw / 2;
+    const left = x - bw / 2 + sway;
     const top = y - bh / 2 + bob;
 
     ctx.globalAlpha = alpha;
@@ -435,18 +447,6 @@
         ctx.fillStyle = snap.palette[c] || '#fff';
         ctx.fillRect(left + cx * cell, top + cy * cell, cell, cell);
       }
-    }
-    // 目(唯一の手がかり: 白目+黒目でしっかり見えるサイズに)
-    const eyeY = top + 2.5 * cell;
-    for (const ex of [left + 2.5 * cell, left + 7.5 * cell]) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-      ctx.beginPath();
-      ctx.arc(ex, eyeY, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#111827';
-      ctx.beginPath();
-      ctx.arc(ex, eyeY, 1.6, 0, Math.PI * 2);
-      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -503,6 +503,27 @@
     ctx.save();
     ctx.translate(-cam.x, -cam.y);
     drawStage(curr);
+
+    // 絵の具アイテム(隠れフェーズ中のみ)
+    for (const it of curr.items || []) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.4)';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = curr.palette[it.c] || '#fff';
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 8.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath();
+      ctx.arc(it.x - 3, it.y - 3, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     for (const p of curr.players) {
       let x = p.x;

@@ -14,7 +14,7 @@
     <!-- メニュー画面 -->
     <section data-screen="menu" class="panel">
       <h1>🦎 ぬりかくれカメレオン</h1>
-      <p class="hint">お絵描きかくれんぼ!体に背景を写して擬態し、鬼の目をあざむけ(2〜6人・人数の1/3が自動で鬼)。手がかりは「目」「呼吸のゆらぎ」「足元の影」「体のツルッとした質感」</p>
+      <p class="hint">お絵描きかくれんぼ!体に背景を写して擬態し、鬼の目をあざむけ(2〜6人)。手がかりは「呼吸のゆらぎ(体の微動)」と「体のツルッとした質感」だけ…</p>
       <label class="field-label" for="input-name">ニックネーム</label>
       <input id="input-name" class="input" maxlength="12" placeholder="なまえ(省略可)" />
       <button id="btn-create" class="btn">ルームを作る</button>
@@ -50,8 +50,7 @@
 
       <!-- お絵描きパネル(隠れフェーズのカメレオンのみ表示) -->
       <div id="paint-panel" class="panel hidden" style="max-width: 860px; width: 100%;">
-        <p class="hint">🎨 背景に合わせて体をぬろう!「スタンプ」でその場の背景をコピー → 筆で微調整</p>
-        <button id="btn-stamp" class="btn">📷 背景をコピー(スタンプ)</button>
+        <p class="hint">🎨 マップに落ちている絵の具を拾うと、その色が使えるようになる。隠れ場所に合う色を集めて体をぬろう!</p>
         <div id="palette-row" style="display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;"></div>
         <canvas id="body-editor" width="180" height="252"
                 style="border: 1px solid #2c3a72; border-radius: 8px; touch-action: none; background: #0d1330; align-self: center;"></canvas>
@@ -59,7 +58,7 @@
 
       <p class="footer-note">
         移動:WASD / 矢印キー / 画面ドラッグ ・ 鬼:マウスで狙ってクリック(またはタップ)で射撃<br />
-        🔍 完璧に塗っても「目・呼吸のゆらぎ・足元の影・質感の違い」は消せない…!
+        🔍 完璧に塗っても「呼吸のゆらぎ」と「質感の違い」は消せない…!
       </p>
     </section>
   </div>
