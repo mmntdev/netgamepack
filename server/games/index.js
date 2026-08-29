@@ -4,6 +4,7 @@
 // 1. server/games/<id>.js に { meta, Game } をエクスポートするモジュールを作成
 // 2. ここで require してリストに追加
 // 3. public/<id>/ にクライアントページを作成
+const boids = require('./boids');
 const breakout = require('./breakout');
 const camo = require('./camo');
 const edges = require('./edges');
@@ -14,7 +15,7 @@ const snake = require('./snake');
 const pong = require('./pong');
 
 const GAMES = {};
-for (const mod of [breakout, camo, edges, kitchen, kitchenbattle, polygon, snake, pong]) {
+for (const mod of [boids, breakout, camo, edges, kitchen, kitchenbattle, polygon, snake, pong]) {
   GAMES[mod.meta.id] = mod;
 }
 
