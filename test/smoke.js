@@ -87,10 +87,18 @@ async function testHttp() {
   const games = await fetchJson(`${BASE}/api/games`);
   check(games.status === 200 && Array.isArray(games.body), '/api/games が配列を返す');
   check(
-    ['breakout', 'camo', 'edges', 'kitchen', 'kitchenbattle', 'polygon', 'snake', 'pong'].every(
-      (id) => games.body.some((g) => g.id === id)
-    ),
-    '全8ゲームが登録されている'
+    [
+      'boids',
+      'breakout',
+      'camo',
+      'edges',
+      'kitchen',
+      'kitchenbattle',
+      'polygon',
+      'snake',
+      'pong',
+    ].every((id) => games.body.some((g) => g.id === id)),
+    '全9ゲームが登録されている'
   );
 }
 
@@ -814,6 +822,166 @@ function testCamoLogic() {
   check(painted, 'CPUカメレオンが絵の具を集めて体を塗る');
 }
 
+function testBoidsLogic() {
+  console.log('色鬼ボイド(シミュレーションロジック):');
+  const mod = require('../server/games/boids.js');
+  const dt = 1 / 60;
+
+  const g = new mod.Game(
+    [
+      { id: 'a', name: 'A', pref: 'yellow' },
+      { id: 'b', name: 'B', pref: 'red' },
+      { id: 'c', name: 'C', pref: null },
+    ],
+    { winPct: 80 }
+  );
+  check(
+    g.players.get('a').team === 2 && g.players.get('b').team === 0,
+    '希望チームが尊重される'
+  );
+  check(g.players.get('c').team === 1, 'おまかせは人数の少ないチームへ');
+  check(g.boids.length === 120, '120匹が湧く');
+  const counts = g.counts();
+  check(
+    counts[0] === 40 && counts[1] === 40 && counts[2] === 40,
+    '色が i%3 で均等配分される'
+  );
+
+  // カウントダウン中は押せない
+  g.handleInput('a', { k: 'chase' });
+  check(g.teamParams[2].chase === 1.0, 'カウントダウン中の先押しは無効');
+
+  for (let i = 0; i < 60 * 3 + 3; i++) g.tick(dt);
+  g.handleInput('a', { k: 'chase' });
+  check(Math.abs(g.teamParams[2].chase - 1.15) < 1e-9, '作戦ボタン1押しで+0.15');
+  g.handleInput('a', { k: 'chase' });
+  check(Math.abs(g.teamParams[2].chase - 1.15) < 1e-9, '連打の受付上限(同tick内は無視)');
+  g.handleInput('a', { k: '__proto__' });
+  g.handleInput('a', { k: 'nope' });
+  check(Math.abs(g.teamParams[2].chase - 1.15) < 1e-9, '不正なパラメータキーは無視される');
+
+  // 上限クランプ(押し続けても max=2 を超えない)
+  for (let i = 0; i < 120; i++) {
+    g.tick(dt);
+    g.tick(dt);
+    g.tick(dt);
+    g.handleInput('a', { k: 'chase' });
+  }
+  check(g.teamParams[2].chase <= 2 && g.teamParams[2].chase > 1.9, '上限でクランプされる');
+
+  // 減衰: 押さずに5秒 → 基準値方向へ 0.02×10 下がる
+  const before = g.teamParams[2].chase;
+  for (let i = 0; i < 60 * 5; i++) g.tick(dt);
+  const after = g.teamParams[2].chase;
+  check(
+    after < before && Math.abs(before - after - 0.2) < 0.03,
+    `プレイヤーチームは0.5秒ごとに減衰する(${before.toFixed(2)} → ${after.toFixed(2)})`
+  );
+
+  // 移動: 全boidがフィールド内(トーラス)に留まる
+  check(
+    g.boids.every((b) => b.x >= 0 && b.x < 800 && b.y >= 0 && b.y < 600),
+    'boidsがトーラス内に留まる'
+  );
+
+  // AI戦況評価: 劣勢チームは守備型に
+  const g2 = new mod.Game([{ id: 'a', name: 'A', pref: 'red' }], {});
+  g2.boids.forEach((b, i) => (b.c = i < 20 ? 1 : 0));
+  g2.aiTick();
+  const p1 = g2.teamParams[1];
+  check(
+    Math.abs(p1.flee - 1.3) < 1e-9 &&
+      Math.abs(p1.coh - 1.2) < 1e-9 &&
+      Math.abs(p1.chase - 0.8) < 1e-9 &&
+      Math.abs(p1.speed - 1.4) < 1e-9,
+    '劣勢のAIチームは守備型(flee+0.3, coh+0.2, chase-0.2, speed+0.1)'
+  );
+  check(
+    g2.teamParams[0].speed === 1.3 && g2.teamParams[0].chase === 1.0,
+    'プレイヤーのいるチームはAIが触らない'
+  );
+
+  // 捕獲と支配率勝利
+  const g3 = new mod.Game([{ id: 'a', name: 'A', pref: 'red' }], { winPct: 100 });
+  for (const b of g3.boids) b.c = 0;
+  g3.boids[1].c = 1; // 赤の獲物(青)を1匹だけ、赤の隣に置く
+  g3.boids[1].x = g3.boids[0].x = 400;
+  g3.boids[1].y = 300;
+  g3.boids[0].y = 295;
+  g3.t = g3.startAt; // カウントダウンを飛ばす
+  g3.tick(dt);
+  check(g3.boids[1].c === 0, '捕獲距離内の獲物は捕獲側の色に変わる');
+  check(
+    g3.finished && g3.result.title.includes('赤'),
+    `支配率100%で勝利する(${g3.result && g3.result.title})`
+  );
+
+  // タイムアップ: 最多チームの勝ち
+  const g4 = new mod.Game([{ id: 'a', name: 'A', pref: 'blue' }], { winPct: 100, time: 120 });
+  g4.boids.forEach((b, i) => (b.c = i < 50 ? 1 : i % 2)); // 青を最多にする
+  g4.t = g4.startAt + 120;
+  g4.tick(dt);
+  check(
+    g4.finished && g4.result.title.includes('タイムアップ') && g4.result.title.includes('青'),
+    `タイムアップで最多チームの勝ち(${g4.result && g4.result.title})`
+  );
+  check(g4.result.rows.length === 3, '結果に3チームぶんの行が載る');
+
+  // 途中参加はAIチームを引き継ぐ
+  const g5 = new mod.Game([{ id: 'a', name: 'A', pref: 'red' }], {});
+  g5.addPlayer({ id: 'late', name: '途中' });
+  check(g5.players.get('late').team !== 0, '途中参加はプレイヤー不在のチームへ入る');
+  g5.removePlayer('late');
+  check(g5.playerCount === 1, '退出でチームがAI制御に戻る');
+}
+
+async function testBoids() {
+  console.log('色鬼ボイド(通信):');
+  const host = await connect();
+
+  const created = await emitAck(host, 'room:create', { gameId: 'boids', name: 'とり' });
+  check(created.ok === true, 'ルームを作成できる');
+
+  const set1 = await emitAck(host, 'room:setting', { key: 'winPct', value: 60 });
+  check(set1.ok === true, '勝利条件(支配率)を変更できる');
+  const pref = await emitAck(host, 'room:pref', { value: 'blue' });
+  check(pref.ok === true, '希望チームを設定できる');
+
+  const started = await emitAck(host, 'room:start', {});
+  check(started.ok === true, '1人でソロ開始できる');
+
+  const snap0 = await waitFor(host, 'game:state');
+  check(snap0.b.length === 120 * 4, '120匹×4要素のスナップショットが届く');
+  check(snap0.winPct === 60, '設定した勝利条件が反映される');
+  const me = snap0.players.find((p) => p.id === host.id);
+  check(me && me.team === 1, '希望どおり青チームになる');
+  check(
+    JSON.stringify(snap0.ai) === '[true,false,true]',
+    'プレイヤー不在の2チームがAI制御になる'
+  );
+
+  // カウントダウン明けに作戦ボタン連打 → パラメータ上昇
+  await sleep(3500);
+  for (let i = 0; i < 5; i++) {
+    host.emit('game:input', { k: 'chase', n: i });
+    await sleep(100);
+  }
+  const snap1 = await waitFor(host, 'game:state');
+  check(snap1.params[1][1] > 1.0, `連打で追跡欲が上がる(${snap1.params[1][1]})`);
+
+  // boids が動いている
+  await sleep(500);
+  const snap2 = await waitFor(host, 'game:state');
+  let movedCount = 0;
+  for (let i = 0; i < snap2.b.length; i += 4) {
+    if (snap2.b[i] !== snap1.b[i] || snap2.b[i + 1] !== snap1.b[i + 1]) movedCount++;
+  }
+  check(movedCount > 100, `群れが動いている(${movedCount}/120匹が移動)`);
+
+  host.disconnect();
+  await sleep(300);
+}
+
 async function testSettings() {
   console.log('ルーム設定と希望ロール:');
   // ブロック崩し: ライフ変更・権限・クランプ
@@ -1041,6 +1209,8 @@ async function main() {
     await testPong();
     testCamoLogic();
     await testCamo();
+    testBoidsLogic();
+    await testBoids();
     await testSettings();
     await testBots();
     await testSpectatorRescue();

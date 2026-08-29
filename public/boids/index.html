@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>色鬼ボイド — NET GAME PACK</title>
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐦</text></svg>" />
+  <style>
+    .tactics {
+      width: 100%;
+      max-width: 860px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .tactics-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .tactic-btn {
+      padding: 12px 4px;
+      font-size: 0.95rem;
+      line-height: 1.3;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .tactic-btn small {
+      display: block;
+      font-weight: 400;
+      font-size: 0.72rem;
+      opacity: 0.75;
+    }
+    .tactic-btn.shake {
+      animation: btn-shake 0.3s;
+    }
+    @keyframes btn-shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-5px); }
+      40% { transform: translateX(5px); }
+      60% { transform: translateX(-4px); }
+      80% { transform: translateX(4px); }
+    }
+    #limit-msg {
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--danger);
+      color: #200707;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 999px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 5;
+    }
+    #limit-msg.show {
+      opacity: 1;
+    }
+    .tactics-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .tactics-foot label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    #param-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    #param-table th,
+    #param-table td {
+      padding: 3px 8px;
+      text-align: center;
+      border-bottom: 1px solid #26305e;
+    }
+    #param-table tr.mine td {
+      color: var(--text);
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back-link" href="/">← ゲーム選択にもどる</a>
+
+    <!-- メニュー画面 -->
+    <section data-screen="menu" class="panel">
+      <h1>🐦 色鬼ボイド</h1>
+      <p class="hint">赤→青→黄→赤の三すくみで群れが追いかけ合う!作戦ボタン連打で自チームを強化して、目標支配率をめざそう(1人ソロOK・途中参加OK)</p>
+      <label class="field-label" for="input-name">ニックネーム</label>
+      <input id="input-name" class="input" maxlength="12" placeholder="なまえ(省略可)" />
+      <button id="btn-create" class="btn">ルームを作る</button>
+      <div class="divider">または</div>
+      <label class="field-label" for="input-room">ルームコードで参加</label>
+      <input id="input-room" class="input room-code" maxlength="4" placeholder="ABCD"
+             autocapitalize="characters" autocomplete="off" spellcheck="false" />
+      <button id="btn-join" class="btn pink">参加する</button>
+      <p id="menu-error" class="error-msg"></p>
+    </section>
+
+    <!-- ルーム待機画面 -->
+    <section data-screen="room" class="panel hidden">
+      <h1 id="room-game-name">色鬼ボイド</h1>
+      <div class="room-code-box">
+        <span class="label">ルームコード</span>
+        <span class="code" id="room-code">----</span>
+      </div>
+      <button id="btn-copy-link" class="btn secondary">招待リンクをコピー</button>
+      <ul id="player-list" class="player-list"></ul>
+      <p id="room-hint" class="hint"></p>
+      <button id="btn-start" class="btn hidden">ゲーム開始</button>
+      <button id="btn-leave-room" class="btn secondary">退室する</button>
+    </section>
+
+    <!-- ゲーム画面 -->
+    <section data-screen="game" class="game-area hidden">
+      <div class="game-toolbar">
+        <span class="room-tag">ルーム <b id="game-room-code">----</b></span>
+        <button id="btn-leave-game" class="btn secondary">退室する</button>
+      </div>
+      <canvas id="game-canvas" class="game-canvas" width="800" height="600"></canvas>
+      <div class="tactics" id="tactics">
+        <div id="limit-msg">限界です!</div>
+        <div class="tactics-row">
+          <button class="btn tactic-btn" data-param="speed">⚡ 速度<small>[1] 連打で加速</small></button>
+          <button class="btn tactic-btn" data-param="chase">🎯 追跡欲<small>[2] 獲物を追う</small></button>
+          <button class="btn tactic-btn pink" data-param="flee">💨 逃走本能<small>[3] 天敵から逃げる</small></button>
+          <button class="btn tactic-btn secondary" data-param="coh">🤝 結束力<small>[4] 群れをまとめる</small></button>
+        </div>
+        <div class="tactics-foot">
+          <span id="team-banner"></span>
+          <label><input type="checkbox" id="chk-params" /> パラメータ値を表示</label>
+        </div>
+        <table id="param-table" class="hidden">
+          <thead>
+            <tr><th>チーム</th><th>速度</th><th>追跡欲</th><th>逃走本能</th><th>結束力</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="footer-note">作戦ボタンは連打で効果UP・押さないと徐々に基準値へ戻る。キー操作:1〜4</p>
+    </section>
+  </div>
+
+  <!-- 結果オーバーレイ -->
+  <div id="overlay-result" class="overlay hidden">
+    <div class="box">
+      <h2 id="result-title">ゲーム終了</h2>
+      <div id="result-rows" class="result-rows"></div>
+      <p id="result-hint" class="hint"></p>
+      <button id="btn-again" class="btn hidden">もう一度あそぶ</button>
+      <button id="btn-back-room" class="btn secondary">ルームにもどる</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/sfx.js"></script>
+  <script src="/js/lobby.js"></script>
+  <script src="/boids/boids.js"></script>
+</body>
+</html>
